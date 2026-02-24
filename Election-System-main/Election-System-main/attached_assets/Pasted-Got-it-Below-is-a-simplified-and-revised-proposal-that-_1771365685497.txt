@@ -1,0 +1,178 @@
+Got it 👍
+Below is a **simplified and revised proposal** that matches your exact requirement:
+
+* **Admin** → login only
+* **Voters** → registration + login using **email and password**
+
+---
+
+# Proposal: Design of a Simple Online Voting System
+
+## 1. Introduction
+
+This proposal describes the design and development of a **web-based Online Voting System** with two user roles: **Admin** and **Voters**. The system is intended to provide a secure, easy-to-use platform for conducting elections online, ensuring only registered voters can participate and that voting results are accurately recorded.
+
+---
+
+## 2. System Overview
+
+The Online Voting System will consist of:
+
+* An **Admin Module** for managing elections
+* A **Voter Module** for registration, authentication, and voting
+
+The system will be accessible through a web browser and secured using standard authentication mechanisms.
+
+---
+
+## 3. User Roles and Functional Requirements
+
+### 3.1 Admin Module (Login Only)
+
+The Admin will have **login-only access** (no registration).
+
+**Admin Features:**
+
+* Secure login using username/email and password
+* Create and manage elections
+* Add, edit, or remove candidates
+* View registered voters
+* Monitor voting progress
+* View and publish election results
+* Logout securely
+
+> Only authorized admins can access the admin dashboard.
+
+---
+
+### 3.2 Voter Module (Registration and Login)
+
+Voters must register before they can log in and vote.
+
+**Voter Registration:**
+
+* Register using **email and password**
+* Email must be unique
+* Password stored securely using hashing
+* Basic voter details (e.g., name, email)
+
+**Voter Login:**
+
+* Login using registered email and password
+* Authentication validation before access
+* One account per voter
+
+**Voter Features:**
+
+* Login and logout
+* View available elections
+* Cast a vote (only once per election)
+* Receive confirmation after successful voting
+
+---
+
+## 4. System Workflow
+
+1. Admin logs in and creates an election.
+2. Voters register using email and password.
+3. Voters log in to access the voting dashboard.
+4. Each voter casts their vote.
+5. The system records the vote securely.
+6. Admin views and publishes results.
+
+---
+
+## 5. Security Requirements
+
+* Password hashing (e.g., bcrypt or equivalent)
+* Secure session management
+* One-vote-per-voter restriction
+* Input validation to prevent SQL injection and XSS
+* HTTPS for secure data transmission
+* Role-based access control (Admin vs Voter)
+
+---
+
+## 6. Database Design (High-Level)
+
+**Admin Table**
+
+* admin_id
+* email
+* password_hash
+
+**Voter Table**
+
+* voter_id
+* name
+* email
+* password_hash
+
+**Election Table**
+
+* election_id
+* title
+* start_date
+* end_date
+
+**Candidate Table**
+
+* candidate_id
+* election_id
+* name
+
+**Vote Table**
+
+* vote_id
+* voter_id
+* election_id
+* candidate_id
+
+---
+
+## 7. Technology Stack (Proposed)
+
+* **Frontend:** HTML, CSS, JavaScript (React optional)
+* **Backend:** PHP / Python / Node.js
+* **Database:** MySQL / PostgreSQL
+* **Authentication:** Email & password-based login
+* **Hosting:** Web server or cloud platform
+
+---
+
+## 8. Project Timeline
+
+| Phase   | Description           | Duration  |
+| ------- | --------------------- | --------- |
+| Phase 1 | Requirements & Design | 1–2 weeks |
+| Phase 2 | Development           | 4–5 weeks |
+| Phase 3 | Testing               | 2 weeks   |
+| Phase 4 | Deployment            | 1 week    |
+
+**Total Duration:** 8–10 weeks
+
+---
+
+## 9. Deliverables
+
+* Online Voting System (Admin & Voter modules)
+* Database schema
+* Secure authentication system
+* Admin dashboard
+* Voter registration and login pages
+* Final documentation
+
+---
+
+## 10. Conclusion
+
+This Online Voting System will provide a simple, secure, and efficient platform for conducting elections. By separating Admin and Voter roles and using email/password authentication, the system ensures controlled access, ease of use, and reliable election results.
+
+---
+
+If you want, I can:
+
+* Simplify this further for **college project submission**
+* Convert it into **SRS format**
+* Add **use case diagrams, ER diagrams, or flowcharts**
+* Rewrite it in **very simple language** for beginners
