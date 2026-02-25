@@ -122,7 +122,7 @@ export function useCreateCandidate() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (data: { name: string; platform?: string; electionId: number }) => {
+    mutationFn: async (data: { name: string; platform?: string | null; party?: string | null; symbol?: string | null; electionId: number; status?: string }) => {
       const res = await fetch(api.candidates.create.path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -190,6 +190,8 @@ export function useCastVote() {
     onSuccess: (_, { electionId }) => {
       queryClient.invalidateQueries({ queryKey: [api.elections.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.elections.get.path, electionId] });
+      queryClient.invalidateQueries({ queryKey: [api.votes.mine.path] });
+      queryClient.invalidateQueries({ queryKey: [api.analytics.proceedings.path] });
       toast({ title: "Vote cast successfully!", description: "Your vote has been recorded." });
     },
     onError: (err: Error) => {

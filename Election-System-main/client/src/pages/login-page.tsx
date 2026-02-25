@@ -19,7 +19,7 @@ import { Vote, Loader2 } from "lucide-react";
 import { Link } from "wouter";
 
 const loginSchema = z.object({
-  username: z.string().min(1, "Username is required"),
+  username: z.string().min(1, "Registration number is required"),
   password: z.string().min(1, "Password is required"),
 });
 
@@ -30,7 +30,7 @@ export default function LoginPage() {
   // Redirect if already logged in (move to effect to avoid setState during render)
   useEffect(() => {
     if (user) {
-      setLocation(user.isAdmin ? "/admin/dashboard" : "/dashboard");
+      setLocation(user.isAdmin ? "/admin/dashboard" : user.role === "analyst" ? "/analytics" : "/dashboard");
     }
   }, [user, setLocation]);
   if (user) return null;
@@ -44,7 +44,8 @@ export default function LoginPage() {
   });
 
   function onSubmit(values: z.infer<typeof loginSchema>) {
-    login(values);
+    const isRegNo = /^[A-Z]{2}\d{2}\/PU\/\d{5}\/\d{2}$/i.test(values.username);
+    login({ ...values, username: isRegNo ? values.username.toUpperCase() : values.username });
   }
 
   return (
@@ -71,9 +72,9 @@ export default function LoginPage() {
                   name="username"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Username</FormLabel>
+                      <FormLabel>Registration Number</FormLabel>
                       <FormControl>
-                        <Input placeholder="Enter your username" {...field} className="h-12" />
+                        <Input placeholder="e.g. SB30/PU/40239/20" {...field} className="h-12 uppercase" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

@@ -1,13 +1,29 @@
 import { useElections } from "@/hooks/use-elections";
 import { useAuth } from "@/hooks/use-auth";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@shared/routes";
 import { ElectionCard } from "@/components/election-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
-import { AlertCircle, CheckSquare, Clock, History, List, RefreshCw } from "lucide-react";
+import { AlertCircle, CheckSquare, Clock, History, List, RefreshCw, Trophy } from "lucide-react";
 
 export default function Dashboard() {
   const { data: elections, isLoading, error, refetch } = useElections();
+  const { data: proceedings } = useQuery({
+    queryKey: [api.analytics.proceedings.path, "voter-dashboard"],
+    queryFn: async () => {
+      const res = await fetch(api.analytics.proceedings.path);
+      if (!res.ok) throw new Error("Failed to load analytics");
+      return api.analytics.proceedings.responses[200].parse(await res.json());
+    },
+    retry: 1,
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+  });
   const { user } = useAuth();
 
   if (isLoading) {
@@ -48,6 +64,7 @@ export default function Dashboard() {
   const votedElections = allElections.filter((e: any) => e.hasVoted);
   const votesCast = votedElections.length;
   const pastVotedElections = pastElections.filter((e: any) => e.hasVoted);
+  const racePulse = (proceedings?.byPosition ?? []).slice(0, 6);
 
   return (
     <div className="space-y-12">
@@ -146,6 +163,48 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </div>
+      </section>
+
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-display font-bold">Live Race Pulse</h2>
+          <Link href="/analytics">
+            <Button variant="outline">Open Analyst View</Button>
+          </Link>
+        </div>
+        {racePulse.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {racePulse.map((position) => {
+              const sorted = [...position.candidates].sort((a, b) => b.voteCount - a.voteCount);
+              const leader = sorted[0];
+              const share = position.totalVotes > 0 && leader ? (leader.voteCount / position.totalVotes) * 100 : 0;
+              return (
+                <Card key={position.position} className="bg-muted/20">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">{position.position}</CardTitle>
+                    <p className="text-xs text-muted-foreground">{position.status} | {position.totalVotes} votes cast</p>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm">
+                      <Trophy className="h-4 w-4 text-amber-500" />
+                      <span className="font-medium">{leader?.candidateName ?? "No leader yet"}</span>
+                    </div>
+                    <Progress value={Math.min(share, 100)} />
+                    <p className="text-xs text-muted-foreground">
+                      {leader ? `${share.toFixed(1)}% share of position votes` : "Waiting for votes"}
+                    </p>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        ) : (
+          <Card className="bg-muted/20">
+            <CardContent className="p-6 text-sm text-muted-foreground">
+              Analyst data is being prepared. Check back after seed setup or live voting activity.
+            </CardContent>
+          </Card>
+        )}
       </section>
 
       {/* Active Elections */}

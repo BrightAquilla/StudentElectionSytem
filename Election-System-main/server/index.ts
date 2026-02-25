@@ -4,9 +4,11 @@ import { serveStatic } from "./static";
 import { createAdminUser } from "./auth";
 import { runMigrations } from "./migrate";
 import { createServer } from "http";
+import { setupRealtime } from "./realtime";
 
 const app = express();
 const httpServer = createServer(app);
+setupRealtime(httpServer);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));

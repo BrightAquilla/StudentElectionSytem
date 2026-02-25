@@ -3,14 +3,33 @@ import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+export const ELECTION_POSITIONS = [
+  "President",
+  "Vice President",
+  "Secretary General",
+  "Finance Secretary",
+  "Academic Secretary",
+  "Sports Secretary",
+  "Gender Secretary",
+] as const;
+
 // === TABLE DEFINITIONS ===
 
 // Users (Admins and Voters)
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   username: text("username").notNull().unique(),
+  email: text("email").notNull().unique(),
   password: text("password").notNull(),
+  emailVerified: boolean("email_verified").default(true).notNull(),
+  emailVerificationToken: text("email_verification_token"),
+  emailVerificationExpires: timestamp("email_verification_expires"),
+  passwordResetToken: text("password_reset_token"),
+  passwordResetExpires: timestamp("password_reset_expires"),
+  role: text("role").notNull().default("voter"), // "admin" | "analyst" | "voter"
   isAdmin: boolean("is_admin").default(false).notNull(),
+  isDisabled: boolean("is_disabled").default(false).notNull(),
+  deletedAt: timestamp("deleted_at"),
   name: text("name").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -19,6 +38,7 @@ export const users = pgTable("users", {
 export const elections = pgTable("elections", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
+  position: text("position").notNull().default("President"),
   description: text("description"),
   startDate: timestamp("start_date").notNull(),
   endDate: timestamp("end_date").notNull(),
@@ -49,6 +69,16 @@ export const votes = pgTable("votes", {
 }, (t) => ({
   unqVote: uniqueIndex("unique_vote_idx").on(t.voterId, t.electionId),
 }));
+
+// Audit logs for privileged actions
+export const auditLogs = pgTable("audit_logs", {
+  id: serial("id").primaryKey(),
+  actorId: integer("actor_id").references(() => users.id).notNull(),
+  action: text("action").notNull(),
+  targetUserId: integer("target_user_id").references(() => users.id),
+  details: text("details"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
 
 // === RELATIONS ===
 

@@ -11,7 +11,7 @@ export function useAuth() {
     queryKey: [api.auth.me.path],
     queryFn: async () => {
       const res = await fetch(api.auth.me.path);
-      if (res.status === 401) return null;
+      if (res.status === 401 || res.status === 403) return null;
       if (!res.ok) throw new Error("Failed to fetch user");
       return api.auth.me.responses[200].parse(await res.json());
     },
@@ -27,7 +27,10 @@ export function useAuth() {
       });
 
       if (!res.ok) {
-        if (res.status === 401) throw new Error("Invalid username or password");
+        if (res.status === 401) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.message || "Invalid username or password");
+        }
         throw new Error("Login failed");
       }
       return api.auth.login.responses[200].parse(await res.json());
@@ -54,15 +57,15 @@ export function useAuth() {
       });
 
       if (!res.ok) {
-        if (res.status === 409) throw new Error("Username already exists");
+        const body = await res.json().catch(() => null);
+        if (res.status === 409) throw new Error(body?.message || "Account already exists");
+        if (res.status === 400) throw new Error(body?.message || "Invalid registration details");
         throw new Error("Registration failed");
       }
       return api.auth.register.responses[201].parse(await res.json());
     },
-    onSuccess: () => {
-      // Auto login after register logic typically handled by backend session or require separate login
-      // Here we just notify success
-      toast({ title: "Account created", description: "You can now log in." });
+    onSuccess: (data) => {
+      toast({ title: "Account created", description: data.message });
     },
     onError: (error: Error) => {
       toast({ 

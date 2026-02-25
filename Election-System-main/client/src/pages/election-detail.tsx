@@ -20,7 +20,6 @@ import {
 import { ArrowLeft, Calendar, CheckCircle2, User, Eye, AlertCircle } from "lucide-react";
 import { format } from "date-fns";
 import { useState } from "react";
-import type { Candidate } from "@shared/schema";
 
 export default function ElectionDetail() {
   const { id } = useParams();
@@ -154,12 +153,6 @@ export default function ElectionDetail() {
                           alt="Candidate photo"
                           className="h-16 w-16 rounded-full object-cover border-2 border-primary/20"
                         />
-                      ) : candidate.photo && candidate.photo.startsWith('data:image/') ? (
-                        <img
-                          src={candidate.photo}
-                          alt="Candidate photo"
-                          className="h-16 w-16 rounded-full object-cover border-2 border-primary/20"
-                        />
                       ) : (
                         <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center text-primary shrink-0">
                           <User className="w-8 h-8" />
@@ -173,14 +166,14 @@ export default function ElectionDetail() {
                           <strong>Party / Affiliation:</strong> {candidate.party}
                         </div>
                       )}
-                      {candidate.position && (
+                      {election.position && (
                         <div className="text-xs text-muted-foreground mb-1">
-                          <strong>Position Vying For:</strong> {candidate.position}
+                          <strong>Position Vying For:</strong> {election.position}
                         </div>
                       )}
-                      {candidate.manifesto && (
+                      {candidate.platform && (
                         <div className="text-xs text-muted-foreground mb-1">
-                          <strong>Platform / Manifesto:</strong> {candidate.manifesto}
+                          <strong>Platform / Manifesto:</strong> {candidate.platform}
                         </div>
                       )}
                     </div>
@@ -204,9 +197,11 @@ export default function ElectionDetail() {
               <AlertCircle className="mr-2 h-4 w-4" /> Election Inactive
             </Button>
           ) : election.hasVoted ? (
-            <Button disabled variant="secondary" size="lg" className="w-full sm:w-auto">
-              <CheckCircle2 className="mr-2 h-4 w-4" /> You have voted
-            </Button>
+            <Link href="/my-votes" className="w-full sm:w-auto">
+              <Button variant="default" size="lg" className="w-full sm:w-auto">
+                View My Votes
+              </Button>
+            </Link>
           ) : isUpcoming ? (
             <Button disabled variant="outline" size="lg" className="w-full sm:w-auto">
               Voting starts {format(startDate, "PPP p")}

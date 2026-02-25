@@ -1,6 +1,6 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { insertElectionSchema } from "@shared/schema";
+import { ELECTION_POSITIONS, insertElectionSchema } from "@shared/schema";
 import { useCreateElection } from "@/hooks/use-elections";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/form";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { z } from "zod";
 
 // Extend schema to handle date strings from input
@@ -27,11 +27,13 @@ const formSchema = insertElectionSchema.extend({
 
 export default function CreateElection() {
   const { mutate, isPending } = useCreateElection();
+  const [, setLocation] = useLocation();
   
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       title: "",
+      position: "President",
       description: "",
       startDate: "",
       endDate: "",
@@ -44,6 +46,10 @@ export default function CreateElection() {
       ...values,
       startDate: new Date(values.startDate),
       endDate: new Date(values.endDate),
+    }, {
+      onSuccess: () => {
+        setLocation("/admin/dashboard");
+      },
     });
   }
 
@@ -71,6 +77,30 @@ export default function CreateElection() {
                     <FormControl>
                       <Input placeholder="e.g. 2024 Student Council Election" {...field} />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="position"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Position Being Vied For</FormLabel>
+                    <FormControl>
+                      <select
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        value={field.value}
+                        onChange={field.onChange}
+                      >
+                        {ELECTION_POSITIONS.map((position) => (
+                          <option key={position} value={position}>
+                            {position}
+                          </option>
+                        ))}
+                      </select>
+                    </FormControl>
+                    <FormDescription>Select one position for this election.</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

@@ -22,6 +22,8 @@ import AdminElectionDetail from "@/pages/admin-election-detail";
 import CreateElection from "@/pages/create-election";
 import AdminAnalytics from "@/pages/admin-analytics";
 import AdminVoters from "@/pages/admin-voters";
+import AnalyticsDashboard from "@/pages/analytics-dashboard";
+import ProfilePage from "@/pages/profile-page";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component, adminOnly = false }: { component: React.ComponentType, adminOnly?: boolean }) {
@@ -72,8 +74,14 @@ function Router() {
         <Route path="/my-votes">
           <ProtectedRoute component={MyVotes} />
         </Route>
+        <Route path="/analytics">
+          <ProtectedRoute component={AnalyticsDashboard} />
+        </Route>
         <Route path="/apply-candidate">
           <ProtectedRoute component={ApplyCandidate} />
+        </Route>
+        <Route path="/profile">
+          <ProtectedRoute component={ProfilePage} />
         </Route>
 
         {/* Admin Routes */}

@@ -44,6 +44,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import { format } from "date-fns";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { ELECTION_POSITIONS } from "@shared/schema";
 
 // ─── Status helper (isPublished checked FIRST) ───────────────────────────────
 
@@ -167,6 +168,7 @@ function EditElectionDialog({ election }: { election: any }) {
   const form = useForm({
     defaultValues: {
       title: election.title ?? "",
+      position: election.position ?? "President",
       description: election.description ?? "",
       startDate: election.startDate ? new Date(election.startDate).toISOString().slice(0, 16) : "",
       endDate: election.endDate ? new Date(election.endDate).toISOString().slice(0, 16) : "",
@@ -195,6 +197,19 @@ function EditElectionDialog({ election }: { election: any }) {
           <div className="space-y-1.5">
             <Label>Description</Label>
             <Textarea {...form.register("description")} className="min-h-[80px]" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Position Being Vied For</Label>
+            <select
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              {...form.register("position", { required: true })}
+            >
+              {ELECTION_POSITIONS.map((position) => (
+                <option key={position} value={position}>
+                  {position}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -358,7 +373,7 @@ function EditCandidateDialog({ candidate }: { candidate: any }) {
 
 // ─── Add Candidate Dialog ─────────────────────────────────────────────────────
 
-function AddCandidateDialog({ electionId }: { electionId: number }) {
+function AddCandidateDialog({ electionId, compact = false }: { electionId: number; compact?: boolean }) {
   const { mutate, isPending } = useCreateCandidate();
   const [open, setOpen] = useState(false);
   const [photoBase64, setPhotoBase64] = useState<string | null>(null);
@@ -373,7 +388,7 @@ function AddCandidateDialog({ electionId }: { electionId: number }) {
     const imagePayload = photoBase64 ? `__img__${photoBase64}` : null;
 
     mutate(
-      { electionId, name: values.name, party: values.party || null, symbol: imagePayload, platform: combinedPlatform } as any,
+      { electionId, name: values.name, party: values.party || null, symbol: imagePayload, platform: combinedPlatform },
       { onSuccess: () => { setOpen(false); form.reset(); setPhotoBase64(null); } }
     );
   };
@@ -381,7 +396,9 @@ function AddCandidateDialog({ electionId }: { electionId: number }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button><UserPlus className="mr-2 h-4 w-4" /> Add Candidate</Button>
+        <Button size={compact ? "sm" : "default"} variant={compact ? "outline" : "default"}>
+          <UserPlus className={compact ? "mr-1.5 h-3.5 w-3.5" : "mr-2 h-4 w-4"} /> Add Candidate
+        </Button>
       </DialogTrigger>
       <DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>Add New Candidate</DialogTitle></DialogHeader>
@@ -423,7 +440,7 @@ function AddCandidateDialog({ electionId }: { electionId: number }) {
 
 // ─── Candidate Card ───────────────────────────────────────────────────────────
 
-function CandidateCard({ candidate }: { candidate: any }) {
+function CandidateCard({ candidate, electionPosition, voteCount }: { candidate: any; electionPosition: string; voteCount: number }) {
   const { mutate: deleteCandidate, isPending } = useDeleteCandidate();
 
   const positionMatch = (candidate.platform as string | null)?.match(/^\[Position:\s*(.+?)\]/);
@@ -450,7 +467,7 @@ function CandidateCard({ candidate }: { candidate: any }) {
             <div className="flex items-start justify-between gap-1">
               <div>
                 <h4 className="font-bold text-base leading-tight">{candidate.name}</h4>
-                {position && <Badge variant="secondary" className="mt-1 text-xs font-normal">{position}</Badge>}
+                <Badge variant="secondary" className="mt-1 text-xs font-normal">{electionPosition || position || "Position"}</Badge>
               </div>
               <div className="flex items-center gap-0.5 shrink-0 -mt-1">
                 <EditCandidateDialog candidate={candidate} />
@@ -479,6 +496,7 @@ function CandidateCard({ candidate }: { candidate: any }) {
             </div>
             <div className="flex gap-3 mt-1.5 text-xs text-muted-foreground flex-wrap">
               {candidate.party && <span><strong>Party:</strong> {candidate.party}</span>}
+              <span><strong>Votes:</strong> {voteCount}</span>
             </div>
             {platformText && <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{platformText}</p>}
           </div>
@@ -528,7 +546,10 @@ function AdminElectionsList() {
               <Card key={election.id} className={`flex flex-col transition-opacity ${!election.isPublished ? "opacity-70" : ""}`}>
                 <CardContent className="p-5 flex flex-col gap-3 flex-1">
                   <div className="flex items-start justify-between gap-2">
-                    <h3 className="font-bold text-lg leading-tight">{election.title}</h3>
+                    <div>
+                      <h3 className="font-bold text-lg leading-tight">{election.title}</h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">{election.position}</p>
+                    </div>
                     <Badge className={`text-xs shrink-0 ${status.className}`} variant="outline">{status.label}</Badge>
                   </div>
                   <p className="text-sm text-muted-foreground line-clamp-2 flex-1">
@@ -553,6 +574,7 @@ function AdminElectionsList() {
                     <Button variant="outline" size="sm" className="flex-1" onClick={() => setLocation(`/admin/elections/${election.id}`)}>
                       <Eye className="mr-1.5 h-3.5 w-3.5" /> View
                     </Button>
+                    <AddCandidateDialog electionId={election.id} compact />
                     <EditElectionDialog election={election} />
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
@@ -612,6 +634,7 @@ export default function AdminElectionDetail() {
           <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-3xl font-display font-bold">{election.title}</h1>
             <Badge variant="outline" className={`text-xs ${status.className}`}>{status.label}</Badge>
+            <Badge variant="secondary" className="text-xs">{election.position}</Badge>
           </div>
           <p className="text-muted-foreground mt-1">
             {format(new Date(election.startDate), "MMM d")} – {format(new Date(election.endDate), "MMM d, yyyy")}
@@ -663,6 +686,10 @@ export default function AdminElectionDetail() {
                   <span className="text-muted-foreground block">Candidates</span>
                   <span className="font-medium">{election.candidates.length}</span>
                 </div>
+                <div>
+                  <span className="text-muted-foreground block">Position</span>
+                  <span className="font-medium">{election.position}</span>
+                </div>
               </div>
               <div>
                 <span className="text-muted-foreground block text-sm mb-1">Description</span>
@@ -682,7 +709,12 @@ export default function AdminElectionDetail() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {election.candidates.map((candidate: any) => (
-              <CandidateCard key={candidate.id} candidate={candidate} />
+              <CandidateCard
+                key={candidate.id}
+                candidate={candidate}
+                electionPosition={election.position}
+                voteCount={results?.candidates?.find((c: any) => c.id === candidate.id)?.voteCount ?? 0}
+              />
             ))}
             {election.candidates.length === 0 && (
               <div className="col-span-full text-center p-12 text-muted-foreground border-2 border-dashed rounded-xl">

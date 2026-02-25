@@ -39,8 +39,12 @@ export function ElectionCard({ election, isAdmin = false }: ElectionCardProps) {
     badgeColor = "secondary";
   }
 
+  const endedCardStyle = isEnded
+    ? "opacity-80 saturate-50 border-dashed"
+    : "";
+
   return (
-    <Card className="group hover:shadow-lg transition-all duration-300 border-border/50 bg-card overflow-hidden flex flex-col h-full">
+    <Card className={`group hover:shadow-lg transition-all duration-300 border-border/50 bg-card overflow-hidden flex flex-col h-full ${endedCardStyle}`}>
       <div className={`h-2 w-full ${isPublished && isActive ? 'bg-green-500' : isPublished && isUpcoming ? 'bg-blue-500' : 'bg-gray-300'}`} />
       
       <CardHeader className="pb-4">
@@ -53,7 +57,7 @@ export function ElectionCard({ election, isAdmin = false }: ElectionCardProps) {
           </Badge>
           {election.hasVoted && (
             <Badge variant="outline" className="text-primary border-primary gap-1">
-              <CheckCircle2 className="w-3 h-3" /> Voted
+              <CheckCircle2 className="w-3 h-3" /> Already Voted
             </Badge>
           )}
         </div>
@@ -96,16 +100,26 @@ export function ElectionCard({ election, isAdmin = false }: ElectionCardProps) {
               </Link>
             ) : isPublished && isActive ? (
               <div className="flex gap-2">
-                <Link href={`/elections/${election.id}`} className="flex-1">
-                  <Button className="w-full" variant="default">
-                    Vote Now
-                  </Button>
-                </Link>
-                <Link href={`/elections/${election.id}`} className="flex-1">
-                  <Button className="w-full" variant="outline">
-                    View Candidates
-                  </Button>
-                </Link>
+                {election.hasVoted ? (
+                  <Link href="/my-votes" className="w-full">
+                    <Button className="w-full" variant="default">
+                      View My Votes
+                    </Button>
+                  </Link>
+                ) : (
+                  <>
+                    <Link href={`/elections/${election.id}`} className="flex-1">
+                      <Button className="w-full" variant="default">
+                        Vote Now
+                      </Button>
+                    </Link>
+                    <Link href={`/elections/${election.id}`} className="flex-1">
+                      <Button className="w-full" variant="outline">
+                        View Candidates
+                      </Button>
+                    </Link>
+                  </>
+                )}
               </div>
             ) : isPublished && isUpcoming ? (
               <div className="flex gap-2">

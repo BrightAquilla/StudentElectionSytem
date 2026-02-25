@@ -19,7 +19,8 @@ import { Link } from "wouter";
 
 const registerSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
-  username: z.string().min(3, "Username must be at least 3 characters"),
+  username: z.string().regex(/^[A-Z]{2}\d{2}\/PU\/\d{5}\/\d{2}$/i, "Use format like SB30/PU/40239/20"),
+  email: z.string().email("Please enter a valid email address"),
   password: z.string().min(6, "Password must be at least 6 characters"),
   confirmPassword: z.string(),
 }).refine((data) => data.password === data.confirmPassword, {
@@ -32,7 +33,7 @@ export default function RegisterPage() {
   const [, setLocation] = useLocation();
 
   if (user) {
-    setLocation("/dashboard");
+    setLocation(user.isAdmin ? "/admin/dashboard" : user.role === "analyst" ? "/analytics" : "/dashboard");
     return null;
   }
 
@@ -41,6 +42,7 @@ export default function RegisterPage() {
     defaultValues: {
       name: "",
       username: "",
+      email: "",
       password: "",
       confirmPassword: "",
     },
@@ -48,7 +50,8 @@ export default function RegisterPage() {
 
   function onSubmit(values: z.infer<typeof registerSchema>) {
     const { confirmPassword, ...data } = values;
-    register(data, {
+    const payload = { ...data, username: data.username.toUpperCase() };
+    register(payload, {
       onSuccess: () => setLocation("/login"),
     });
   }
@@ -90,9 +93,22 @@ export default function RegisterPage() {
                   name="username"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Username</FormLabel>
+                      <FormLabel>Registration Number</FormLabel>
                       <FormControl>
-                        <Input placeholder="johndoe123" {...field} />
+                        <Input placeholder="e.g. SB30/PU/40239/20" {...field} className="uppercase" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="email"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email</FormLabel>
+                      <FormControl>
+                        <Input type="email" placeholder="student@pwani.ac.ke" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

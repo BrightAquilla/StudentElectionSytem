@@ -28,6 +28,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
 
   const isAdmin = user?.isAdmin;
+  const isAnalyst = user?.role === "analyst";
 
   if (!user) return <>{children}</>;
 
@@ -35,13 +36,13 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b bg-card/50 backdrop-blur-md sticky top-0 z-50">
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
-          <Link href={isAdmin ? "/admin/dashboard" : "/dashboard"} className="flex items-center gap-2 font-display text-2xl font-bold text-primary hover:opacity-80 transition-opacity">
+            <Link href={isAdmin ? "/admin/dashboard" : isAnalyst ? "/analytics" : "/dashboard"} className="flex items-center gap-2 font-display text-2xl font-bold text-primary hover:opacity-80 transition-opacity">
             <Vote className="h-8 w-8" />
             <span>Votely</span>
           </Link>
 
           <nav className="flex items-center gap-6">
-            <Link href={isAdmin ? "/admin/dashboard" : "/dashboard"} className={`text-sm font-medium transition-colors hover:text-primary ${location.includes("dashboard") ? "text-primary" : "text-muted-foreground"}`}>
+            <Link href={isAdmin ? "/admin/dashboard" : isAnalyst ? "/analytics" : "/dashboard"} className={`text-sm font-medium transition-colors hover:text-primary ${location.includes("dashboard") ? "text-primary" : "text-muted-foreground"}`}>
               Dashboard
             </Link>
             {isAdmin && (
@@ -50,11 +51,11 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
               </Link>
             )}
             {isAdmin && (
-              <Link href="/admin/analytics" className={`text-sm font-medium transition-colors hover:text-primary ${location === "/admin/analytics" ? "text-primary" : "text-muted-foreground"}`}>
-                Analytics
+              <Link href="/analytics" className={`text-sm font-medium transition-colors hover:text-primary ${location === "/analytics" ? "text-primary" : "text-muted-foreground"}`}>
+                Live Analytics
               </Link>
             )}
-            {!isAdmin && (
+            {!isAdmin && !isAnalyst && (
               <>
                 <Link href="/elections" className={`text-sm font-medium transition-colors hover:text-primary ${location === "/elections" ? "text-primary" : "text-muted-foreground"}`}>
                   Elections
@@ -62,7 +63,15 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
                 <Link href="/my-votes" className={`text-sm font-medium transition-colors hover:text-primary ${location === "/my-votes" ? "text-primary" : "text-muted-foreground"}`}>
                   My Votes
                 </Link>
+                <Link href="/analytics" className={`text-sm font-medium transition-colors hover:text-primary ${location === "/analytics" ? "text-primary" : "text-muted-foreground"}`}>
+                  Live Analytics
+                </Link>
               </>
+            )}
+            {isAnalyst && (
+              <Link href="/analytics" className={`text-sm font-medium transition-colors hover:text-primary ${location === "/analytics" ? "text-primary" : "text-muted-foreground"}`}>
+                Live Analytics
+              </Link>
             )}
           </nav>
 
@@ -78,16 +87,23 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
                   <User className="h-5 w-5" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuContent align="end" className="w-56 bg-card text-card-foreground border border-border shadow-lg">
                 <DropdownMenuLabel>
                   <div className="flex flex-col">
                     <span className="text-sm font-medium leading-none">{user.name}</span>
-                    <span className="text-xs text-muted-foreground uppercase tracking-wider">{isAdmin ? "Admin" : "Voter"}</span>
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider">{isAdmin ? "Admin" : isAnalyst ? "Analyst" : "Voter"}</span>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {isAdmin ? (
                   <>
+                    <Link href="/profile">
+                      <DropdownMenuItem className="cursor-pointer">
+                        <User className="mr-2 h-4 w-4" />
+                        <span>Profile Settings</span>
+                      </DropdownMenuItem>
+                    </Link>
+                    <DropdownMenuSeparator />
                     <Link href="/admin/dashboard">
                       <DropdownMenuItem className="cursor-pointer">
                         <LayoutDashboard className="mr-2 h-4 w-4" />
@@ -106,16 +122,40 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
                         <span>Manage Voters</span>
                       </DropdownMenuItem>
                     </Link>
-                    <Link href="/admin/analytics">
+                    <Link href="/analytics">
                       <DropdownMenuItem className="cursor-pointer">
                         <BarChart3 className="mr-2 h-4 w-4" />
-                        <span>Analytics</span>
+                        <span>Live Analytics</span>
+                      </DropdownMenuItem>
+                    </Link>
+                    <DropdownMenuSeparator />
+                  </>
+                ) : isAnalyst ? (
+                  <>
+                    <Link href="/profile">
+                      <DropdownMenuItem className="cursor-pointer">
+                        <User className="mr-2 h-4 w-4" />
+                        <span>Profile Settings</span>
+                      </DropdownMenuItem>
+                    </Link>
+                    <DropdownMenuSeparator />
+                    <Link href="/analytics">
+                      <DropdownMenuItem className="cursor-pointer">
+                        <BarChart3 className="mr-2 h-4 w-4" />
+                        <span>Live Analytics</span>
                       </DropdownMenuItem>
                     </Link>
                     <DropdownMenuSeparator />
                   </>
                 ) : (
                   <>
+                    <Link href="/profile">
+                      <DropdownMenuItem className="cursor-pointer">
+                        <User className="mr-2 h-4 w-4" />
+                        <span>Profile Settings</span>
+                      </DropdownMenuItem>
+                    </Link>
+                    <DropdownMenuSeparator />
                     <Link href="/dashboard">
                       <DropdownMenuItem className="cursor-pointer">
                         <LayoutDashboard className="mr-2 h-4 w-4" />
@@ -132,6 +172,12 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
                       <DropdownMenuItem className="cursor-pointer">
                         <Vote className="mr-2 h-4 w-4" />
                         <span>My Votes</span>
+                      </DropdownMenuItem>
+                    </Link>
+                    <Link href="/analytics">
+                      <DropdownMenuItem className="cursor-pointer">
+                        <BarChart3 className="mr-2 h-4 w-4" />
+                        <span>Live Analytics</span>
                       </DropdownMenuItem>
                     </Link>
                     <DropdownMenuSeparator />
