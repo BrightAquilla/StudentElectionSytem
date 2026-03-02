@@ -7,6 +7,16 @@ type RealtimePayload = {
   at: string;
 };
 
+type ActivityPayload = {
+  type: string;
+  summary: string;
+  actor?: string;
+  target?: string;
+  scope?: string;
+  status?: "info" | "success" | "warning" | "error";
+  meta?: Record<string, unknown>;
+};
+
 let wss: WebSocketServer | null = null;
 
 export function setupRealtime(httpServer: Server) {
@@ -27,4 +37,8 @@ export function broadcastRealtime(event: string, data?: unknown) {
       client.send(message);
     }
   });
+}
+
+export function broadcastActivity(activity: ActivityPayload) {
+  broadcastRealtime("activity", activity);
 }

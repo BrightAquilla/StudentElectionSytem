@@ -1,8 +1,9 @@
 import { useElections } from "@/hooks/use-elections";
+import { useAuth } from "@/hooks/use-auth";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,12 +28,23 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { ArrowLeft, Loader2, UserPlus } from "lucide-react";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
+import { api } from "@shared/routes";
+
+type PartyOption = {
+  id: number;
+  code: string;
+  name: string;
+  symbol: string;
+  manifesto: string;
+  createdAt: string | Date | null;
+};
 
 const applySchema = z.object({
   electionId: z.string().min(1, "Please select an election"),
   name: z.string().min(2, "Name must be at least 2 characters"),
   party: z.string().min(1, "Party or affiliation is required"),
+  partyManifesto: z.string().min(20, "Please provide a party manifesto (min 20 characters)"),
   symbol: z.string().min(1, "Symbol is required"),
   platform: z.string().min(10, "Please describe your platform (min 10 characters)"),
 });
@@ -41,6 +53,15 @@ export default function ApplyCandidate() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { data: elections } = useElections();
+  const { user } = useAuth();
+  const { data: parties = [] } = useQuery<PartyOption[]>({
+    queryKey: [api.parties.list.path, "apply-candidate"],
+    queryFn: async () => {
+      const res = await fetch(api.parties.list.path);
+      if (!res.ok) throw new Error("Failed to load parties");
+      return api.parties.list.responses[200].parse(await res.json());
+    },
+  });
 
   // Get election ID from URL query params
   const queryParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
@@ -48,8 +69,25 @@ export default function ApplyCandidate() {
 
   // Only show upcoming elections that haven't started yet
   const now = new Date();
+  const profile = (() => {
+    const match = /^([A-Z]{2})\d{2}\/PU\/\d{5}\/(\d{2})$/i.exec(user?.username || "");
+    if (!match) return null;
+    const facultyCode = match[1].toUpperCase();
+    const intakeShortYear = Number(match[2]);
+    const currentShortYear = new Date().getFullYear() % 100;
+    const yearLevel = Math.max(1, Math.min(6, currentShortYear - intakeShortYear + 1));
+    return { facultyCode, yearLevel };
+  })();
   const upcomingElections = elections?.filter(
-    (e) => now < new Date(e.startDate)
+    (e) => {
+      if (!(now < new Date(e.startDate))) return false;
+      if (!profile) return true;
+      const facultyRules = String((e as any).eligibleFaculties || "").split(",").map((entry) => entry.trim()).filter(Boolean);
+      const yearRules = String((e as any).eligibleYearLevels || "").split(",").map((entry) => entry.trim()).filter(Boolean);
+      const facultyAllowed = facultyRules.length === 0 || facultyRules.includes(profile.facultyCode);
+      const yearAllowed = yearRules.length === 0 || yearRules.includes(String(profile.yearLevel));
+      return facultyAllowed && yearAllowed;
+    }
   ) ?? [];
 
   const form = useForm<z.infer<typeof applySchema>>({
@@ -58,10 +96,16 @@ export default function ApplyCandidate() {
       electionId: preSelectedElectionId || "",
       name: "",
       party: "",
+      partyManifesto: "",
       symbol: "",
       platform: "",
     },
   });
+  const selectedParty = form.watch("party");
+  const selectedPartyConfig = useMemo(
+    () => parties.find((party) => party.code === selectedParty),
+    [parties, selectedParty],
+  );
 
   // Update the form when preSelectedElectionId changes
   useEffect(() => {
@@ -70,6 +114,17 @@ export default function ApplyCandidate() {
     }
   }, [preSelectedElectionId, form]);
 
+  useEffect(() => {
+    if (!selectedPartyConfig) {
+      form.setValue("symbol", "", { shouldValidate: true });
+      form.setValue("partyManifesto", "", { shouldValidate: true });
+      return;
+    }
+
+    form.setValue("symbol", selectedPartyConfig.symbol, { shouldValidate: true });
+    form.setValue("partyManifesto", selectedPartyConfig.manifesto, { shouldValidate: true });
+  }, [selectedPartyConfig, form]);
+
   const { mutate, isPending } = useMutation({
     mutationFn: async (values: z.infer<typeof applySchema>) => {
       const res = await fetch("/api/candidates/apply", {
@@ -77,6 +132,9 @@ export default function ApplyCandidate() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...values,
+          party: selectedPartyConfig?.name || values.party,
+          partyManifesto: selectedPartyConfig?.manifesto || values.partyManifesto,
+          symbol: selectedPartyConfig?.symbol || values.symbol,
           electionId: Number(values.electionId),
           status: "pending",
         }),
@@ -191,10 +249,24 @@ export default function ApplyCandidate() {
                     name="party"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Party / Affiliation</FormLabel>
-                        <FormControl>
-                          <Input placeholder="e.g. Green Party, Independent" {...field} />
-                        </FormControl>
+                        <FormLabel>Party</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select a registered party" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {parties.map((party) => (
+                              <SelectItem key={party.id} value={party.code}>
+                                {party.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormDescription className="text-xs">
+                          Select from the existing party registry. Free-text party entry is disabled here.
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -208,10 +280,10 @@ export default function ApplyCandidate() {
                       <FormItem>
                         <FormLabel>Election Symbol</FormLabel>
                         <FormControl>
-                          <Input placeholder="e.g. Tree, Flower, Star" {...field} />
+                          <Input placeholder="Auto-filled from selected party" {...field} readOnly />
                         </FormControl>
                         <FormDescription className="text-xs">
-                          A unique symbol voters can identify you by
+                          This is assigned automatically from the selected party.
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -219,13 +291,35 @@ export default function ApplyCandidate() {
                   />
                 </div>
 
+                <FormField
+                  control={form.control}
+                  name="partyManifesto"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Party Manifesto</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Select a party to preview its manifesto"
+                          className="min-h-[110px]"
+                          readOnly
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        This is the party's shared agenda. Your personal manifesto below should stay aligned with it.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
                 {/* Platform */}
                 <FormField
                   control={form.control}
                   name="platform"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Platform / Manifesto</FormLabel>
+                      <FormLabel>Candidate Manifesto</FormLabel>
                       <FormControl>
                         <Textarea
                           placeholder="Describe your key policies, goals, and why voters should choose you..."

@@ -21,8 +21,12 @@ import AdminCandidates from "@/pages/admin-candidates";
 import AdminElectionDetail from "@/pages/admin-election-detail";
 import CreateElection from "@/pages/create-election";
 import AdminAnalytics from "@/pages/admin-analytics";
+import AdminAuditLogs from "@/pages/admin-audit-logs";
+import AdminStressMonitor from "@/pages/admin-stress-monitor";
+import AdminParties from "@/pages/admin-parties";
 import AdminVoters from "@/pages/admin-voters";
 import AnalyticsDashboard from "@/pages/analytics-dashboard";
+import CandidateDashboard from "@/pages/candidate-dashboard";
 import ProfilePage from "@/pages/profile-page";
 import NotFound from "@/pages/not-found";
 
@@ -80,6 +84,9 @@ function Router() {
         <Route path="/apply-candidate">
           <ProtectedRoute component={ApplyCandidate} />
         </Route>
+        <Route path="/candidate-dashboard">
+          <ProtectedRoute component={CandidateDashboard} />
+        </Route>
         <Route path="/profile">
           <ProtectedRoute component={ProfilePage} />
         </Route>
@@ -105,6 +112,15 @@ function Router() {
         </Route>
         <Route path="/admin/analytics">
           <ProtectedRoute component={AdminAnalytics} adminOnly />
+        </Route>
+        <Route path="/admin/audit-logs">
+          <ProtectedRoute component={AdminAuditLogs} adminOnly />
+        </Route>
+        <Route path="/admin/stress-monitor">
+          <ProtectedRoute component={AdminStressMonitor} adminOnly />
+        </Route>
+        <Route path="/admin/parties">
+          <ProtectedRoute component={AdminParties} adminOnly />
         </Route>
 
         <Route path="/" component={LoginPage} />

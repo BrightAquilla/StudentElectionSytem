@@ -1,4 +1,4 @@
-import { useElections } from "@/hooks/use-elections";
+﻿import { useElections } from "@/hooks/use-elections";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@shared/routes";
@@ -25,6 +25,19 @@ export default function Dashboard() {
     staleTime: 0,
   });
   const { user } = useAuth();
+  const { data: candidateEntries } = useQuery({
+    queryKey: [api.candidates.mine.path, "dashboard"],
+    queryFn: async () => {
+      const res = await fetch(api.candidates.mine.path);
+      if (!res.ok) throw new Error("Failed to load candidate entries");
+      return api.candidates.mine.responses[200].parse(await res.json());
+    },
+    enabled: user?.role === "voter" || user?.role === "candidate",
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
+    staleTime: 0,
+  });
 
   if (isLoading) {
     return (
@@ -65,6 +78,7 @@ export default function Dashboard() {
   const votesCast = votedElections.length;
   const pastVotedElections = pastElections.filter((e: any) => e.hasVoted);
   const racePulse = (proceedings?.byPosition ?? []).slice(0, 6);
+  const hasCandidateDashboard = user?.role === "candidate" || (candidateEntries?.length ?? 0) > 0;
 
   return (
     <div className="space-y-12">
@@ -163,6 +177,23 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </div>
+        {(user?.role === "voter" || user?.role === "candidate") && (
+          <Card className="bg-muted/20">
+            <CardContent className="p-6 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">{hasCandidateDashboard ? "Candidate Dashboard" : "Run for Office"}</h3>
+                <p className="text-muted-foreground text-sm">
+                  {hasCandidateDashboard
+                    ? "Track your candidate application, manifesto, and live standing if you are on the ballot."
+                    : "Apply for an upcoming election and open your campaign dashboard once your candidacy is recorded."}
+                </p>
+              </div>
+              <Link href={hasCandidateDashboard ? "/candidate-dashboard" : "/apply-candidate"}>
+                <Button size="lg" variant="outline">{hasCandidateDashboard ? "Open Dashboard" : "Apply Now"}</Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
       </section>
 
       <section className="space-y-4">
@@ -244,3 +275,5 @@ export default function Dashboard() {
     </div>
   );
 }
+
+

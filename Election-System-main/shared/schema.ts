@@ -13,6 +13,39 @@ export const ELECTION_POSITIONS = [
   "Gender Secretary",
 ] as const;
 
+export const FACULTY_CODES = [
+  "SB",
+  "EB",
+  "SC",
+  "ED",
+  "HS",
+  "IT",
+] as const;
+
+export const PARTY_SEED = [
+  {
+    code: "unity-forward",
+    name: "Unity Forward Movement",
+    symbol: "Torch",
+    manifesto:
+      "Unity Forward Movement prioritises transparent student leadership, reliable representation, and practical welfare reforms across all schools.",
+  },
+  {
+    code: "scholars-alliance",
+    name: "Scholars Alliance Party",
+    symbol: "Book",
+    manifesto:
+      "Scholars Alliance Party focuses on academic excellence, stronger faculty engagement, and accountable access to student support services.",
+  },
+  {
+    code: "campus-renewal",
+    name: "Campus Renewal Front",
+    symbol: "Leaf",
+    manifesto:
+      "Campus Renewal Front campaigns on inclusive governance, safe campus life, and sustainable student-centered development.",
+  },
+] as const;
+
 // === TABLE DEFINITIONS ===
 
 // Users (Admins and Voters)
@@ -31,6 +64,11 @@ export const users = pgTable("users", {
   isDisabled: boolean("is_disabled").default(false).notNull(),
   deletedAt: timestamp("deleted_at"),
   name: text("name").notNull(),
+  candidateParty: text("candidate_party"),
+  candidateSymbol: text("candidate_symbol"),
+  candidatePartyManifesto: text("candidate_party_manifesto"),
+  candidateManifesto: text("candidate_manifesto"),
+  candidateApprovalStatus: text("candidate_approval_status").notNull().default("not_applicable"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -40,9 +78,20 @@ export const elections = pgTable("elections", {
   title: text("title").notNull(),
   position: text("position").notNull().default("President"),
   description: text("description"),
+  eligibleFaculties: text("eligible_faculties"),
+  eligibleYearLevels: text("eligible_year_levels"),
   startDate: timestamp("start_date").notNull(),
   endDate: timestamp("end_date").notNull(),
   isPublished: boolean("is_published").default(false).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const parties = pgTable("parties", {
+  id: serial("id").primaryKey(),
+  code: text("code").notNull().unique(),
+  name: text("name").notNull(),
+  symbol: text("symbol").notNull(),
+  manifesto: text("manifesto").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -50,11 +99,15 @@ export const elections = pgTable("elections", {
 export const candidates = pgTable("candidates", {
   id: serial("id").primaryKey(),
   electionId: integer("election_id").references(() => elections.id).notNull(),
+  userId: integer("user_id").references(() => users.id),
   name: text("name").notNull(),
   platform: text("platform"),
+  partyManifesto: text("party_manifesto"),
   symbol: text("symbol"),          // e.g. "Tree", "Flower", "Star"
   party: text("party"),            // e.g. "Green Party", "Independent"
   status: text("status").notNull().default("approved"), // "pending" | "approved" | "rejected"
+  reviewNotes: text("review_notes"),
+  reviewedAt: timestamp("reviewed_at"),
   appliedAt: timestamp("applied_at").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -114,6 +167,7 @@ export const votesRelations = relations(votes, ({ one }) => ({
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export const insertElectionSchema = createInsertSchema(elections).omit({ id: true, createdAt: true });
+export const insertPartySchema = createInsertSchema(parties).omit({ id: true, createdAt: true });
 export const insertCandidateSchema = createInsertSchema(candidates).omit({ id: true, createdAt: true, appliedAt: true });
 export const insertVoteSchema = createInsertSchema(votes).omit({ id: true, createdAt: true });
 
@@ -126,6 +180,9 @@ export type Election = typeof elections.$inferSelect;
 export type InsertElection = z.infer<typeof insertElectionSchema>;
 export type CreateElectionRequest = InsertElection;
 export type UpdateElectionRequest = Partial<InsertElection>;
+
+export type Party = typeof parties.$inferSelect;
+export type InsertParty = z.infer<typeof insertPartySchema>;
 
 export type Candidate = typeof candidates.$inferSelect;
 export type InsertCandidate = z.infer<typeof insertCandidateSchema>;

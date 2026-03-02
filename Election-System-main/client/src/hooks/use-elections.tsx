@@ -122,7 +122,7 @@ export function useCreateCandidate() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (data: { name: string; platform?: string | null; party?: string | null; symbol?: string | null; electionId: number; status?: string }) => {
+    mutationFn: async (data: { name: string; platform?: string | null; party?: string | null; partyManifesto?: string | null; symbol?: string | null; electionId: number; userId?: number | null; status?: string }) => {
       const res = await fetch(api.candidates.create.path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

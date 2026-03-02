@@ -14,6 +14,11 @@ declare global {
       role: string;
       isAdmin: boolean;
       isDisabled: boolean;
+      candidateParty: string | null;
+      candidateSymbol: string | null;
+      candidatePartyManifesto: string | null;
+      candidateManifesto: string | null;
+      candidateApprovalStatus: string;
       deletedAt: Date | null;
       createdAt: Date | null;
     }

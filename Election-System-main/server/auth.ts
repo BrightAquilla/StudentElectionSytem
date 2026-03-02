@@ -2,12 +2,16 @@ import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import { type Express } from "express";
 import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { storage } from "./storage";
+import { pool } from "./db";
 import { User } from "@shared/schema";
 import { api } from "@shared/routes";
 import { z } from "zod";
+import { rateLimit } from "./rate-limit";
+import { broadcastActivity } from "./realtime";
 
 const scryptAsync = promisify(scrypt);
 
@@ -25,11 +29,19 @@ async function comparePasswords(supplied: string, stored: string) {
 }
 
 export function setupAuth(app: Express) {
+  const PgStore = connectPgSimple(session);
   const sessionSettings: session.SessionOptions = {
     secret: process.env.SESSION_SECRET || "r8q,+&1LM3)CD*zAGpx1xm{NeQhc;#",
     resave: false,
     saveUninitialized: false,
-    store: storage.sessionStore,
+    store: new PgStore({
+      pool,
+      tableName: "user_sessions",
+      createTableIfMissing: true,
+    }),
+    cookie: {
+      maxAge: 1000 * 60 * 60 * 12,
+    },
   };
 
   if (app.get("env") === "production") {
@@ -42,7 +54,10 @@ export function setupAuth(app: Express) {
   app.use((req, res, next) => {
     if (req.isAuthenticated() && (req.user?.isDisabled || req.user?.deletedAt)) {
       req.logout(() => {
-        res.status(403).json({ message: "Account is disabled. Contact an administrator." });
+        const message = req.user?.role === "candidate" && req.user?.candidateApprovalStatus === "pending"
+          ? "Candidate registration is pending admin approval."
+          : "Account is disabled. Contact an administrator.";
+        res.status(403).json({ message });
       });
       return;
     }
@@ -52,7 +67,13 @@ export function setupAuth(app: Express) {
   passport.use(
     new LocalStrategy(async (username, password, done) => {
       const user = await storage.getUserByUsername(username);
-      if (!user || user.isDisabled || user.deletedAt) {
+      if (!user || user.deletedAt) {
+        return done(null, false, { message: "Account is disabled. Contact an administrator." });
+      }
+      if (user.role === "candidate" && user.candidateApprovalStatus === "pending") {
+        return done(null, false, { message: "Candidate registration is pending admin approval." });
+      }
+      if (user.isDisabled) {
         return done(null, false, { message: "Account is disabled. Contact an administrator." });
       }
       if (!(await comparePasswords(password, user.password))) {
@@ -69,7 +90,7 @@ export function setupAuth(app: Express) {
     done(null, user);
   });
 
-  app.post("/api/register", async (req, res, next) => {
+  app.post("/api/register", rateLimit({ windowMs: 15 * 60 * 1000, max: 20, scope: "register" }), async (req, res, next) => {
     try {
       const input = api.auth.register.input.parse({
         ...req.body,
@@ -84,22 +105,46 @@ export function setupAuth(app: Express) {
         return res.status(409).json({ message: "Email already exists" });
       }
 
+      const isCandidateRegistration = input.accountType === "candidate";
+      const { accountType, party, symbol, partyManifesto, candidateManifesto, ...userInput } = input;
       const hashedPassword = await hashPassword(input.password);
       await storage.createUser({
-        ...input,
+        ...userInput,
         password: hashedPassword,
-        role: "voter",
+        role: isCandidateRegistration ? "candidate" : "voter",
+        isDisabled: isCandidateRegistration,
+        candidateParty: isCandidateRegistration ? party ?? null : null,
+        candidateSymbol: isCandidateRegistration ? symbol ?? null : null,
+        candidatePartyManifesto: isCandidateRegistration ? partyManifesto ?? null : null,
+        candidateManifesto: isCandidateRegistration ? candidateManifesto ?? null : null,
+        candidateApprovalStatus: isCandidateRegistration ? "pending" : "not_applicable",
       });
-      res.status(201).json({ message: "Account created successfully." });
+      storage.invalidateAnalyticsCache();
+      broadcastActivity({
+        type: "user_registered",
+        summary: `New ${accountType} registered: ${input.username}`,
+        actor: input.username,
+        scope: "auth",
+        status: "success",
+        meta: { accountType, approvalStatus: isCandidateRegistration ? "pending" : "approved", party: party ?? null },
+      });
+      res.status(201).json({
+        message: isCandidateRegistration
+          ? "Candidate registration submitted. Wait for admin approval before signing in."
+          : "Account created successfully.",
+      });
     } catch (err) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ message: err.errors[0].message, details: err.errors });
+      }
+      if (isUniqueViolation(err)) {
+        return res.status(409).json({ message: "Registration number or email already exists" });
       }
       next(err);
     }
   });
 
-  app.post("/api/login", (req, res, next) => {
+  app.post("/api/login", rateLimit({ windowMs: 15 * 60 * 1000, max: 50, scope: "login" }), (req, res, next) => {
     passport.authenticate("local", (err: any, user: User | false, info?: { message?: string }) => {
       if (err) return next(err);
       if (!user) {
@@ -108,14 +153,33 @@ export function setupAuth(app: Express) {
 
       req.login(user, (loginErr) => {
         if (loginErr) return next(loginErr);
+        broadcastActivity({
+          type: "user_login",
+          summary: `${user.name} signed in`,
+          actor: user.username,
+          scope: "auth",
+          status: "info",
+          meta: { role: user.role },
+        });
         return res.status(200).json(user);
       });
     })(req, res, next);
   });
 
   app.post("/api/logout", (req, res, next) => {
+    const currentUser = req.user;
     req.logout((err) => {
       if (err) return next(err);
+      if (currentUser) {
+        broadcastActivity({
+          type: "user_logout",
+          summary: `${currentUser.name} signed out`,
+          actor: currentUser.username,
+          scope: "auth",
+          status: "info",
+          meta: { role: currentUser.role },
+        });
+      }
       res.sendStatus(200);
     });
   });
@@ -173,6 +237,13 @@ export function setupAuth(app: Express) {
         updated = passwordUpdated;
       }
 
+      broadcastActivity({
+        type: "profile_updated",
+        summary: `${updated.name} updated their profile`,
+        actor: updated.username,
+        scope: "account",
+        status: "info",
+      });
       return res.json(updated);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -198,4 +269,8 @@ export async function createAdminUser() {
         });
         console.log("Admin user created: admin / admin123");
     }
+}
+
+function isUniqueViolation(error: unknown) {
+  return !!error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "23505";
 }

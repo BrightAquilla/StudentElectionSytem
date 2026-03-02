@@ -21,7 +21,7 @@ type SeedElection = {
   startDate: Date;
   endDate: Date;
   isPublished: boolean;
-  candidates: { name: string; party: string; platform: string; symbol?: string }[];
+  candidates: { name: string; party: string; partyManifesto: string; platform: string; symbol?: string }[];
   votePlan: number[];
 };
 
@@ -95,7 +95,7 @@ async function ensureElection(input: Omit<SeedElection, "candidates" | "votePlan
   return created;
 }
 
-async function ensureCandidate(electionId: number, input: { name: string; party: string; platform: string; symbol?: string }) {
+async function ensureCandidate(electionId: number, input: { name: string; party: string; partyManifesto: string; platform: string; symbol?: string }) {
   const existing = await db
     .select()
     .from(candidates)
@@ -107,6 +107,7 @@ async function ensureCandidate(electionId: number, input: { name: string; party:
       .update(candidates)
       .set({
         party: input.party,
+        partyManifesto: input.partyManifesto,
         platform: input.platform,
         symbol: input.symbol ?? null,
         status: "approved",
@@ -118,15 +119,59 @@ async function ensureCandidate(electionId: number, input: { name: string; party:
 
   const [created] = await db
     .insert(candidates)
-    .values({
-      electionId,
-      name: input.name,
-      party: input.party,
-      platform: input.platform,
-      symbol: input.symbol ?? null,
-      status: "approved",
+      .values({
+        electionId,
+        name: input.name,
+        party: input.party,
+        partyManifesto: input.partyManifesto,
+        platform: input.platform,
+        symbol: input.symbol ?? null,
+        status: "approved",
     })
     .returning();
+  return created;
+}
+
+async function ensureCandidateApplication(input: {
+  electionId: number;
+  userId: number;
+  name: string;
+  party: string;
+  partyManifesto: string;
+  platform: string;
+  symbol?: string;
+  status: "pending" | "approved" | "rejected";
+  reviewNotes?: string | null;
+}) {
+  const existing = await db
+    .select()
+    .from(candidates)
+    .where(and(eq(candidates.electionId, input.electionId), eq(candidates.name, input.name)))
+    .limit(1);
+
+  const values = {
+    electionId: input.electionId,
+    userId: input.userId,
+    name: input.name,
+    party: input.party,
+    partyManifesto: input.partyManifesto,
+    platform: input.platform,
+    symbol: input.symbol ?? null,
+    status: input.status,
+    reviewNotes: input.reviewNotes ?? null,
+    reviewedAt: input.status === "pending" ? null : new Date(),
+  };
+
+  if (existing.length > 0) {
+    const [updated] = await db
+      .update(candidates)
+      .set(values)
+      .where(eq(candidates.id, existing[0].id))
+      .returning();
+    return updated;
+  }
+
+  const [created] = await db.insert(candidates).values(values).returning();
   return created;
 }
 
@@ -181,6 +226,15 @@ async function main() {
     password: "analyst123",
   });
 
+  const demoCandidateUser = await ensureUser({
+    username: "CD11/PU/51001/25",
+    email: "candidate.demo@pwani.local",
+    name: "Candidate Demo",
+    role: "voter",
+    isAdmin: false,
+    password: "candidate123",
+  });
+
   const voterUsers: { id: number }[] = [];
   for (let i = 1; i <= 80; i++) {
     const prefix = i % 2 === 0 ? "SB" : "EB";
@@ -207,9 +261,9 @@ async function main() {
       endDate: addDays(now, 2),
       isPublished: true,
       candidates: [
-        { name: "Brian Mwatela", party: "Unity Front", platform: "Academic reform and student welfare.", symbol: "Eagle" },
-        { name: "Janet Njeri", party: "Forward Alliance", platform: "Digital campus and scholarship support.", symbol: "Torch" },
-        { name: "David Omondi", party: "Independent", platform: "Transparent budgeting and club funding.", symbol: "Bridge" },
+        { name: "Brian Mwatela", party: "Unity Front", partyManifesto: "Unity Front focuses on student welfare, strong representation, and accountable campus leadership.", platform: "Academic reform and student welfare.", symbol: "Eagle" },
+        { name: "Janet Njeri", party: "Forward Alliance", partyManifesto: "Forward Alliance champions innovation, digital access, and scholarship support for all learners.", platform: "Digital campus and scholarship support.", symbol: "Torch" },
+        { name: "David Omondi", party: "Independent", partyManifesto: "Independent candidates campaign on flexible, issue-based leadership without party constraints.", platform: "Transparent budgeting and club funding.", symbol: "Bridge" },
       ],
       votePlan: [26, 21, 13],
     },
@@ -221,9 +275,9 @@ async function main() {
       endDate: addDays(now, 2),
       isPublished: true,
       candidates: [
-        { name: "Mercy Akinyi", party: "Unity Front", platform: "Improve hostels and student services.", symbol: "Shield" },
-        { name: "Peter Kiprono", party: "Forward Alliance", platform: "Expand mentorship and peer tutoring.", symbol: "Compass" },
-        { name: "Lydia Mwende", party: "Independent", platform: "Inclusive leadership and sports support.", symbol: "Wave" },
+        { name: "Mercy Akinyi", party: "Unity Front", partyManifesto: "Unity Front focuses on student welfare, strong representation, and accountable campus leadership.", platform: "Improve hostels and student services.", symbol: "Shield" },
+        { name: "Peter Kiprono", party: "Forward Alliance", partyManifesto: "Forward Alliance champions innovation, digital access, and scholarship support for all learners.", platform: "Expand mentorship and peer tutoring.", symbol: "Compass" },
+        { name: "Lydia Mwende", party: "Independent", partyManifesto: "Independent candidates campaign on flexible, issue-based leadership without party constraints.", platform: "Inclusive leadership and sports support.", symbol: "Wave" },
       ],
       votePlan: [23, 20, 15],
     },
@@ -235,9 +289,9 @@ async function main() {
       endDate: addDays(now, -1),
       isPublished: true,
       candidates: [
-        { name: "Kevin Kilonzo", party: "Campus Governance", platform: "Efficient communication and student records.", symbol: "Atom" },
-        { name: "Esther Atieno", party: "Independent", platform: "Transparent secretariat operations.", symbol: "Leaf" },
-        { name: "Samuel Wekesa", party: "Scholars Bloc", platform: "Faster meeting minutes and policy tracking.", symbol: "Book" },
+        { name: "Kevin Kilonzo", party: "Campus Governance", partyManifesto: "Campus Governance prioritizes disciplined administration, transparency, and responsive student offices.", platform: "Efficient communication and student records.", symbol: "Atom" },
+        { name: "Esther Atieno", party: "Independent", partyManifesto: "Independent candidates campaign on flexible, issue-based leadership without party constraints.", platform: "Transparent secretariat operations.", symbol: "Leaf" },
+        { name: "Samuel Wekesa", party: "Scholars Bloc", partyManifesto: "Scholars Bloc advocates for academic efficiency, policy follow-through, and evidence-based leadership.", platform: "Faster meeting minutes and policy tracking.", symbol: "Book" },
       ],
       votePlan: [19, 22, 11],
     },
@@ -249,9 +303,9 @@ async function main() {
       endDate: addDays(now, 6),
       isPublished: true,
       candidates: [
-        { name: "Faith Wanjiru", party: "Fiscal Reform", platform: "Budget transparency and monthly financial briefs.", symbol: "Notebook" },
-        { name: "Ibrahim Hassan", party: "Independent", platform: "Cost controls and accountable expenditure.", symbol: "Circle" },
-        { name: "Sharon Nekesa", party: "Future Union", platform: "Scholarship support and emergency fund policy.", symbol: "Spark" },
+        { name: "Faith Wanjiru", party: "Fiscal Reform", partyManifesto: "Fiscal Reform stands for transparent budgets, disciplined spending, and measurable value for student funds.", platform: "Budget transparency and monthly financial briefs.", symbol: "Notebook" },
+        { name: "Ibrahim Hassan", party: "Independent", partyManifesto: "Independent candidates campaign on flexible, issue-based leadership without party constraints.", platform: "Cost controls and accountable expenditure.", symbol: "Circle" },
+        { name: "Sharon Nekesa", party: "Future Union", partyManifesto: "Future Union backs resilient student finance, emergency support, and long-term welfare planning.", platform: "Scholarship support and emergency fund policy.", symbol: "Spark" },
       ],
       votePlan: [0, 0, 0],
     },
@@ -263,9 +317,9 @@ async function main() {
       endDate: addDays(now, 3),
       isPublished: true,
       candidates: [
-        { name: "Collins Mutua", party: "Academic Progress", platform: "Revision support and faculty coordination.", symbol: "Ball" },
-        { name: "Naomi Chebet", party: "Independent", platform: "Academic mentorship and exam readiness clinics.", symbol: "Track" },
-        { name: "George Muli", party: "Team First", platform: "Learning resources and timetable stability.", symbol: "Whistle" },
+        { name: "Collins Mutua", party: "Academic Progress", partyManifesto: "Academic Progress advocates for stronger learning support, faculty coordination, and academic success systems.", platform: "Revision support and faculty coordination.", symbol: "Ball" },
+        { name: "Naomi Chebet", party: "Independent", partyManifesto: "Independent candidates campaign on flexible, issue-based leadership without party constraints.", platform: "Academic mentorship and exam readiness clinics.", symbol: "Track" },
+        { name: "George Muli", party: "Team First", partyManifesto: "Team First focuses on practical student services, reliable timetables, and accessible learning resources.", platform: "Learning resources and timetable stability.", symbol: "Whistle" },
       ],
       votePlan: [17, 17, 17],
     },
@@ -277,9 +331,9 @@ async function main() {
       endDate: addDays(now, 8),
       isPublished: true,
       candidates: [
-        { name: "Carol Njoki", party: "Campus Athletics", platform: "More inter-faculty tournaments and sports inclusion.", symbol: "Music" },
-        { name: "Victor Mwangi", party: "Independent", platform: "Facilities maintenance and athlete welfare.", symbol: "Mic" },
-        { name: "Amina Yusuf", party: "Active Union", platform: "Community fitness programs and wellness drives.", symbol: "Star" },
+        { name: "Carol Njoki", party: "Campus Athletics", partyManifesto: "Campus Athletics promotes healthy competition, sports access, and better support for student athletes.", platform: "More inter-faculty tournaments and sports inclusion.", symbol: "Music" },
+        { name: "Victor Mwangi", party: "Independent", partyManifesto: "Independent candidates campaign on flexible, issue-based leadership without party constraints.", platform: "Facilities maintenance and athlete welfare.", symbol: "Mic" },
+        { name: "Amina Yusuf", party: "Active Union", partyManifesto: "Active Union supports student wellness, inclusive participation, and vibrant campus activities.", platform: "Community fitness programs and wellness drives.", symbol: "Star" },
       ],
       votePlan: [0, 0, 0],
     },
@@ -291,9 +345,9 @@ async function main() {
       endDate: addDays(now, 5),
       isPublished: true,
       candidates: [
-        { name: "Grace Wairimu", party: "Equality First", platform: "Gender inclusion policy and safe-space support.", symbol: "Lotus" },
-        { name: "Dennis Ochieng", party: "Independent", platform: "Awareness programs and anti-discrimination advocacy.", symbol: "Scale" },
-        { name: "Fatuma Abdalla", party: "Campus Equity", platform: "Inclusive leadership and student support networks.", symbol: "Ribbon" },
+        { name: "Grace Wairimu", party: "Equality First", partyManifesto: "Equality First promotes inclusion, safety, and equal opportunity across student leadership and services.", platform: "Gender inclusion policy and safe-space support.", symbol: "Lotus" },
+        { name: "Dennis Ochieng", party: "Independent", partyManifesto: "Independent candidates campaign on flexible, issue-based leadership without party constraints.", platform: "Awareness programs and anti-discrimination advocacy.", symbol: "Scale" },
+        { name: "Fatuma Abdalla", party: "Campus Equity", partyManifesto: "Campus Equity focuses on fair representation, support networks, and a more inclusive student culture.", platform: "Inclusive leadership and student support networks.", symbol: "Ribbon" },
       ],
       votePlan: [0, 0, 0],
     },
@@ -318,10 +372,87 @@ async function main() {
     await seedVotes(election.id, electionCandidateRows, voterUsers, electionSeed.votePlan);
   }
 
+  const allElections = await db.select().from(elections);
+  const presidentElection = allElections.find((entry) => entry.position === "President");
+  const financeElection = allElections.find((entry) => entry.position === "Finance Secretary");
+  const sportsElection = allElections.find((entry) => entry.position === "Sports Secretary");
+  const genderElection = allElections.find((entry) => entry.position === "Gender Secretary");
+
+  if (presidentElection && voterUsers[0]) {
+    await ensureCandidateApplication({
+      electionId: presidentElection.id,
+      userId: voterUsers[0].id,
+      name: "Edwin Barasa",
+      party: "Campus Renewal League",
+      partyManifesto: "Campus Renewal League runs on practical reform: cleaner governance, digital service delivery, and welfare programs funded through disciplined student budgeting.",
+      platform: "I will publish executive scorecards monthly, open budget hearings to class reps, and expand emergency support for students under financial pressure.",
+      symbol: "Phoenix",
+      status: "pending",
+      reviewNotes: null,
+    });
+  }
+
+  if (presidentElection) {
+    await ensureCandidateApplication({
+      electionId: presidentElection.id,
+      userId: demoCandidateUser.id,
+      name: "Candidate Demo",
+      party: "Leadership Reform Movement",
+      partyManifesto: "Leadership Reform Movement focuses on accountable student leadership, transparent welfare funding, and fast response to student concerns through measurable service standards.",
+      platform: "I will publish executive action reports every month, hold open student briefings, and push faster resolution channels for academic and welfare complaints.",
+      symbol: "Beacon",
+      status: "approved",
+      reviewNotes: "Demo candidate account approved for dashboard walkthroughs and candidate experience testing.",
+    });
+  }
+
+  if (financeElection && voterUsers[1]) {
+    await ensureCandidateApplication({
+      electionId: financeElection.id,
+      userId: voterUsers[1].id,
+      name: "Joan Muli",
+      party: "Transparent Treasury Movement",
+      partyManifesto: "Transparent Treasury Movement advocates zero-surprise budgeting, quarterly student finance reviews, and stronger emergency grant systems.",
+      platform: "I will digitize vote-approved spending reports, publish bursary timelines, and track every major expenditure against agreed student priorities.",
+      symbol: "Ledger",
+      status: "pending",
+      reviewNotes: null,
+    });
+  }
+
+  if (sportsElection && voterUsers[2]) {
+    await ensureCandidateApplication({
+      electionId: sportsElection.id,
+      userId: voterUsers[2].id,
+      name: "Brenda Kendi",
+      party: "Active Campus Forum",
+      partyManifesto: "Active Campus Forum pushes for inclusive sports access, modern equipment planning, and stronger athlete support beyond tournament days.",
+      platform: "I will prioritize inter-faculty league scheduling, women’s sports visibility, and practical maintenance standards for sports grounds.",
+      symbol: "Sprint",
+      status: "approved",
+      reviewNotes: "Approved for early campaign visibility. Candidate documents were complete.",
+    });
+  }
+
+  if (genderElection && voterUsers[3]) {
+    await ensureCandidateApplication({
+      electionId: genderElection.id,
+      userId: voterUsers[3].id,
+      name: "Ruth Nyawira",
+      party: "Inclusion First Coalition",
+      partyManifesto: "Inclusion First Coalition focuses on safe reporting channels, equitable participation in leadership, and visible support systems for underrepresented students.",
+      platform: "I will build a stronger reporting pathway for discrimination cases and work with societies to improve campus-wide inclusion standards.",
+      symbol: "Balance",
+      status: "rejected",
+      reviewNotes: "Application rejected because required supporter signatures were not attached.",
+    });
+  }
+
   console.log("Seed complete.");
   console.log("Admin login: admin / admin123");
   console.log("Analyst login: AN00/PU/40000/24 / analyst123");
   console.log("Voter login example: SB32/PU/40202/24 / voter123");
+  console.log("Candidate login: CD11/PU/51001/25 / candidate123");
   console.log(`Seeded by user id: ${admin.id}`);
 }
 

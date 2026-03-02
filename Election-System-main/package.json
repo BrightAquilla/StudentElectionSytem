@@ -8,6 +8,10 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "load:test": "tsx script/load-test.ts",
+    "load:test:votes": "tsx script/vote-load-test.ts",
+    "load:test:background": "tsx script/background-stress.ts",
+    "db:seed:load-users": "tsx script/seed-load-users.ts",
     "db:push": "drizzle-kit push",
     "db:seed": "tsx server/seed.ts"
   },

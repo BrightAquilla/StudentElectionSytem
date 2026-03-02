@@ -44,7 +44,29 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import { format } from "date-fns";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { ELECTION_POSITIONS } from "@shared/schema";
+import { ELECTION_POSITIONS, FACULTY_CODES } from "@shared/schema";
+
+const YEAR_LEVEL_OPTIONS = ["1", "2", "3", "4", "5", "6"];
+
+function toggleCsvSelection(currentValue: string | null | undefined, item: string) {
+  const values = String(currentValue || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (values.includes(item)) {
+    return values.filter((entry) => entry !== item).join(",");
+  }
+
+  return [...values, item].join(",");
+}
+
+function parseCsv(value: string | null | undefined) {
+  return String(value || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
 
 // ─── Status helper (isPublished checked FIRST) ───────────────────────────────
 
@@ -57,6 +79,35 @@ function getElectionStatus(election: any) {
   if (now < new Date(election.startDate))
     return { label: "Scheduled", className: "bg-blue-100 text-blue-700 border-blue-200" };
   return { label: "Active", className: "bg-green-100 text-green-700 border-green-200" };
+}
+
+function EligibilitySummary({ election, compact = false }: { election: any; compact?: boolean }) {
+  const faculties = parseCsv(election.eligibleFaculties);
+  const years = parseCsv(election.eligibleYearLevels);
+
+  return (
+    <div className={compact ? "space-y-2" : "space-y-3"}>
+      <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+        Candidate Eligibility
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {faculties.length > 0 ? faculties.map((faculty) => (
+          <Badge key={`faculty-${faculty}`} variant="outline" className="text-[11px]">
+            Faculty: {faculty}
+          </Badge>
+        )) : (
+          <Badge variant="outline" className="text-[11px]">All faculties</Badge>
+        )}
+        {years.length > 0 ? years.map((yearLevel) => (
+          <Badge key={`year-${yearLevel}`} variant="outline" className="text-[11px]">
+            Year {yearLevel}
+          </Badge>
+        )) : (
+          <Badge variant="outline" className="text-[11px]">All year levels</Badge>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─── Image compression helper ─────────────────────────────────────────────────
@@ -170,6 +221,8 @@ function EditElectionDialog({ election }: { election: any }) {
       title: election.title ?? "",
       position: election.position ?? "President",
       description: election.description ?? "",
+      eligibleFaculties: election.eligibleFaculties ?? "",
+      eligibleYearLevels: election.eligibleYearLevels ?? "",
       startDate: election.startDate ? new Date(election.startDate).toISOString().slice(0, 16) : "",
       endDate: election.endDate ? new Date(election.endDate).toISOString().slice(0, 16) : "",
     },
@@ -211,6 +264,44 @@ function EditElectionDialog({ election }: { election: any }) {
               ))}
             </select>
           </div>
+          <div className="space-y-2">
+            <Label>Eligible Faculty Codes</Label>
+            <p className="text-xs text-muted-foreground">Leave empty to allow all faculties to apply for this office.</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {FACULTY_CODES.map((facultyCode) => {
+                const selected = String(form.watch("eligibleFaculties") || "").split(",").filter(Boolean).includes(facultyCode);
+                return (
+                  <label key={facultyCode} className="flex items-center gap-2 rounded-md border border-input px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => form.setValue("eligibleFaculties", toggleCsvSelection(form.getValues("eligibleFaculties"), facultyCode))}
+                    />
+                    <span>{facultyCode}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Eligible Year Levels</Label>
+            <p className="text-xs text-muted-foreground">Leave empty to allow all year levels to apply.</p>
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+              {YEAR_LEVEL_OPTIONS.map((yearLevel) => {
+                const selected = String(form.watch("eligibleYearLevels") || "").split(",").filter(Boolean).includes(yearLevel);
+                return (
+                  <label key={yearLevel} className="flex items-center justify-center gap-2 rounded-md border border-input px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => form.setValue("eligibleYearLevels", toggleCsvSelection(form.getValues("eligibleYearLevels"), yearLevel))}
+                    />
+                    <span>Y{yearLevel}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label>Start Date & Time</Label>
@@ -220,6 +311,15 @@ function EditElectionDialog({ election }: { election: any }) {
               <Label>End Date & Time</Label>
               <Input type="datetime-local" {...form.register("endDate", { required: true })} />
             </div>
+          </div>
+          <div className="rounded-lg border bg-muted/20 p-4">
+            <EligibilitySummary
+              election={{
+                eligibleFaculties: form.watch("eligibleFaculties"),
+                eligibleYearLevels: form.watch("eligibleYearLevels"),
+              }}
+              compact
+            />
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
@@ -277,20 +377,18 @@ function ImageUpload({ value, onChange }: { value: string | null; onChange: (v: 
 
 const candidateFormSchema = z.object({
   name: z.string().min(2, "Name is required"),
-  position: z.string().min(2, "Position is required"),
   party: z.string().optional(),
+  partyManifesto: z.string().optional(),
   platform: z.string().optional(),
 });
 
 // ─── Edit Candidate Dialog ────────────────────────────────────────────────────
 
-function EditCandidateDialog({ candidate }: { candidate: any }) {
+function EditCandidateDialog({ candidate, electionPosition }: { candidate: any; electionPosition: string }) {
   const [open, setOpen] = useState(false);
   const [photoBase64, setPhotoBase64] = useState<string | null>(null);
   const { mutate, isPending } = useUpdateCandidate();
 
-  const existingPosition = (candidate.platform as string | null)?.match(/^\[Position:\s*(.+?)\]/)?.[1] ?? "";
-  const existingPlatformText = candidate.platform?.replace(/^\[Position:.+?\]\n?/, "").trim() ?? "";
   const existingPhoto =
     typeof candidate.symbol === "string" && candidate.symbol.startsWith("__img__")
       ? candidate.symbol.slice(7)
@@ -300,14 +398,13 @@ function EditCandidateDialog({ candidate }: { candidate: any }) {
     resolver: zodResolver(candidateFormSchema),
     defaultValues: {
       name: candidate.name ?? "",
-      position: existingPosition,
       party: candidate.party ?? "",
-      platform: existingPlatformText,
+      partyManifesto: candidate.partyManifesto ?? "",
+      platform: candidate.platform ?? "",
     },
   });
 
   const onSubmit = (values: z.infer<typeof candidateFormSchema>) => {
-    const combinedPlatform = `[Position: ${values.position}]\n${values.platform || ""}`.trim();
     // Use newly uploaded photo if any, otherwise keep the existing one
     const finalPhoto = photoBase64 ?? existingPhoto;
     const symbolValue = finalPhoto ? `__img__${finalPhoto}` : null;
@@ -318,8 +415,9 @@ function EditCandidateDialog({ candidate }: { candidate: any }) {
         data: {
           name: values.name,
           party: values.party || null,
+          partyManifesto: values.partyManifesto || null,
           symbol: symbolValue,
-          platform: combinedPlatform,
+          platform: values.platform || null,
         },
       },
       { onSuccess: () => setOpen(false) }
@@ -345,9 +443,12 @@ function EditCandidateDialog({ candidate }: { candidate: any }) {
                 {form.formState.errors.name && <p className="text-destructive text-xs">{form.formState.errors.name.message}</p>}
               </div>
               <div className="space-y-1.5">
-                <Label>Position Vying For <span className="text-destructive">*</span></Label>
-                <Input {...form.register("position")} placeholder="e.g. President, Secretary" />
-                {form.formState.errors.position && <p className="text-destructive text-xs">{form.formState.errors.position.message}</p>}
+                <Label>Position Vying For</Label>
+                <select className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={electionPosition} disabled>
+                  {ELECTION_POSITIONS.map((position) => (
+                    <option key={position} value={position}>{position}</option>
+                  ))}
+                </select>
               </div>
             </div>
           </div>
@@ -356,7 +457,11 @@ function EditCandidateDialog({ candidate }: { candidate: any }) {
             <Input {...form.register("party")} placeholder="e.g. Independent" />
           </div>
           <div className="space-y-1.5">
-            <Label>Platform / Manifesto</Label>
+            <Label>Party Manifesto</Label>
+            <Textarea {...form.register("partyManifesto")} placeholder="Shared party agenda and core promises..." className="min-h-[80px]" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Candidate Manifesto</Label>
             <Textarea {...form.register("platform")} placeholder="Key policies and goals..." className="min-h-[80px]" />
           </div>
           <div className="flex justify-end gap-2 pt-1">
@@ -373,22 +478,28 @@ function EditCandidateDialog({ candidate }: { candidate: any }) {
 
 // ─── Add Candidate Dialog ─────────────────────────────────────────────────────
 
-function AddCandidateDialog({ electionId, compact = false }: { electionId: number; compact?: boolean }) {
+function AddCandidateDialog({ electionId, electionPosition, compact = false }: { electionId: number; electionPosition: string; compact?: boolean }) {
   const { mutate, isPending } = useCreateCandidate();
   const [open, setOpen] = useState(false);
   const [photoBase64, setPhotoBase64] = useState<string | null>(null);
 
   const form = useForm<z.infer<typeof candidateFormSchema>>({
     resolver: zodResolver(candidateFormSchema),
-    defaultValues: { name: "", position: "", party: "", platform: "" },
+    defaultValues: { name: "", party: "", partyManifesto: "", platform: "" },
   });
 
   const onSubmit = (values: z.infer<typeof candidateFormSchema>) => {
-    const combinedPlatform = `[Position: ${values.position}]\n${values.platform || ""}`.trim();
     const imagePayload = photoBase64 ? `__img__${photoBase64}` : null;
 
     mutate(
-      { electionId, name: values.name, party: values.party || null, symbol: imagePayload, platform: combinedPlatform },
+      {
+        electionId,
+        name: values.name,
+        party: values.party || null,
+        partyManifesto: values.partyManifesto || null,
+        symbol: imagePayload,
+        platform: values.platform || null,
+      },
       { onSuccess: () => { setOpen(false); form.reset(); setPhotoBase64(null); } }
     );
   };
@@ -412,9 +523,12 @@ function AddCandidateDialog({ electionId, compact = false }: { electionId: numbe
                 {form.formState.errors.name && <p className="text-destructive text-xs">{form.formState.errors.name.message}</p>}
               </div>
               <div className="space-y-1.5">
-                <Label>Position Vying For <span className="text-destructive">*</span></Label>
-                <Input {...form.register("position")} placeholder="e.g. President, Secretary" />
-                {form.formState.errors.position && <p className="text-destructive text-xs">{form.formState.errors.position.message}</p>}
+                <Label>Position Vying For</Label>
+                <select className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={electionPosition} disabled>
+                  {ELECTION_POSITIONS.map((position) => (
+                    <option key={position} value={position}>{position}</option>
+                  ))}
+                </select>
               </div>
             </div>
           </div>
@@ -423,7 +537,11 @@ function AddCandidateDialog({ electionId, compact = false }: { electionId: numbe
             <Input {...form.register("party")} placeholder="e.g. Independent" />
           </div>
           <div className="space-y-1.5">
-            <Label>Platform / Manifesto</Label>
+            <Label>Party Manifesto</Label>
+            <Textarea {...form.register("partyManifesto")} placeholder="Shared party agenda and broad policy promises..." className="min-h-[80px]" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Candidate Manifesto</Label>
             <Textarea {...form.register("platform")} placeholder="Key policies and goals..." className="min-h-[80px]" />
           </div>
           <div className="flex justify-end gap-2 pt-1">
@@ -442,10 +560,7 @@ function AddCandidateDialog({ electionId, compact = false }: { electionId: numbe
 
 function CandidateCard({ candidate, electionPosition, voteCount }: { candidate: any; electionPosition: string; voteCount: number }) {
   const { mutate: deleteCandidate, isPending } = useDeleteCandidate();
-
-  const positionMatch = (candidate.platform as string | null)?.match(/^\[Position:\s*(.+?)\]/);
-  const position = positionMatch?.[1];
-  const platformText = candidate.platform?.replace(/^\[Position:.+?\]\n?/, "").trim();
+  const platformText = candidate.platform;
 
   const photoSrc =
     typeof candidate.symbol === "string" && candidate.symbol.startsWith("__img__")
@@ -467,10 +582,10 @@ function CandidateCard({ candidate, electionPosition, voteCount }: { candidate: 
             <div className="flex items-start justify-between gap-1">
               <div>
                 <h4 className="font-bold text-base leading-tight">{candidate.name}</h4>
-                <Badge variant="secondary" className="mt-1 text-xs font-normal">{electionPosition || position || "Position"}</Badge>
+                <Badge variant="secondary" className="mt-1 text-xs font-normal">{electionPosition || "Position"}</Badge>
               </div>
               <div className="flex items-center gap-0.5 shrink-0 -mt-1">
-                <EditCandidateDialog candidate={candidate} />
+                <EditCandidateDialog candidate={candidate} electionPosition={electionPosition} />
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive">
@@ -555,6 +670,7 @@ function AdminElectionsList() {
                   <p className="text-sm text-muted-foreground line-clamp-2 flex-1">
                     {election.description || "No description provided."}
                   </p>
+                  <EligibilitySummary election={election} compact />
                   <div className="text-xs text-muted-foreground space-y-1">
                     <div><span className="font-medium">Start:</span> {format(new Date(election.startDate), "MMM d, yyyy p")}</div>
                     <div><span className="font-medium">End:</span> {format(new Date(election.endDate), "MMM d, yyyy p")}</div>
@@ -574,7 +690,7 @@ function AdminElectionsList() {
                     <Button variant="outline" size="sm" className="flex-1" onClick={() => setLocation(`/admin/elections/${election.id}`)}>
                       <Eye className="mr-1.5 h-3.5 w-3.5" /> View
                     </Button>
-                    <AddCandidateDialog electionId={election.id} compact />
+                    <AddCandidateDialog electionId={election.id} electionPosition={election.position} compact />
                     <EditElectionDialog election={election} />
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
@@ -695,6 +811,9 @@ export default function AdminElectionDetail() {
                 <span className="text-muted-foreground block text-sm mb-1">Description</span>
                 <p className="text-sm bg-muted/30 p-4 rounded-lg">{election.description || "No description."}</p>
               </div>
+              <div>
+                <EligibilitySummary election={election} />
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -705,7 +824,7 @@ export default function AdminElectionDetail() {
               Candidates
               <span className="ml-2 text-sm font-normal text-muted-foreground">({election.candidates.length})</span>
             </h3>
-            <AddCandidateDialog electionId={electionId} />
+            <AddCandidateDialog electionId={electionId} electionPosition={election.position} />
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {election.candidates.map((candidate: any) => (

@@ -5,10 +5,12 @@ import { createAdminUser } from "./auth";
 import { runMigrations } from "./migrate";
 import { createServer } from "http";
 import { setupRealtime } from "./realtime";
+import { recordRequestMetric } from "./performance";
 
 const app = express();
 const httpServer = createServer(app);
 setupRealtime(httpServer);
+app.disable("x-powered-by");
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -38,6 +40,7 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
+      recordRequestMetric(`${req.method} ${path}`, duration, res.statusCode);
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
@@ -84,6 +87,9 @@ app.use((req, res, next) => {
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.
    const port = parseInt(process.env.PORT || "5000", 10);
+  httpServer.keepAliveTimeout = 65_000;
+  httpServer.headersTimeout = 66_000;
+  httpServer.requestTimeout = 15_000;
   httpServer.listen(port, () => {
   log(`serving on port ${port}`);
 });

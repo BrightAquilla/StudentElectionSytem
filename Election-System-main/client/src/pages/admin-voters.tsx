@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { format } from "date-fns";
@@ -41,9 +41,30 @@ type Voter = {
   isDisabled: boolean;
   deletedAt: string | null;
   createdAt: string | null;
+  isCandidate?: boolean;
+  candidateParty?: string | null;
+  candidateSymbol?: string | null;
+  candidatePartyManifesto?: string | null;
+  candidateManifesto?: string | null;
+  candidateApprovalStatus?: string;
 };
 
-type RoleFilter = "all" | "voter" | "analyst" | "admin";
+type VoterListResponse = {
+  items: Voter[];
+  total: number;
+  counts: {
+    total: number;
+    voter: number;
+    analyst: number;
+    admin: number;
+    candidate: number;
+    disabled: number;
+  };
+  page: number;
+  pageSize: number;
+};
+
+type RoleFilter = "all" | "voter" | "analyst" | "admin" | "candidate";
 type SortOption = "created_desc" | "created_asc" | "name_asc" | "name_desc" | "role";
 
 const createVoterSchema = z.object({
@@ -71,11 +92,18 @@ const passwordSchema = z.object({
   message: "Passwords do not match",
 });
 
-function useVoters() {
-  return useQuery<Voter[]>({
-    queryKey: [api.voters.list.path],
+function useVoters(searchQuery: string, roleFilter: RoleFilter, sortBy: SortOption, page: number, pageSize: number) {
+  return useQuery<VoterListResponse>({
+    queryKey: [api.voters.list.path, searchQuery, roleFilter, sortBy, page, pageSize],
     queryFn: async () => {
-      const res = await fetch(api.voters.list.path);
+      const params = new URLSearchParams({
+        search: searchQuery,
+        role: roleFilter,
+        sort: sortBy,
+        page: String(page),
+        pageSize: String(pageSize),
+      });
+      const res = await fetch(`${api.voters.list.path}?${params.toString()}`);
       if (!res.ok) throw new Error("Failed to fetch users");
       return res.json();
     },
@@ -153,11 +181,40 @@ function useSetVoterStatus() {
       }
       return res.json();
     },
+    onMutate: async (variables) => {
+      await queryClient.cancelQueries({ queryKey: [api.voters.list.path] });
+      const previous = queryClient.getQueriesData<VoterListResponse>({ queryKey: [api.voters.list.path] });
+
+      for (const [queryKey, snapshot] of previous) {
+        if (!snapshot) continue;
+        queryClient.setQueryData<VoterListResponse>(queryKey, {
+          ...snapshot,
+          items: snapshot.items.map((item) =>
+            item.id === variables.id ? { ...item, isDisabled: variables.isDisabled } : item,
+          ),
+          counts: {
+            ...snapshot.counts,
+            disabled: snapshot.counts.disabled + (
+              snapshot.items.some((item) => item.id === variables.id && !item.isDisabled && !item.deletedAt) && variables.isDisabled
+                ? 1
+                : snapshot.items.some((item) => item.id === variables.id && item.isDisabled && !item.deletedAt) && !variables.isDisabled
+                  ? -1
+                  : 0
+            ),
+          },
+        });
+      }
+
+      return { previous };
+    },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: [api.voters.list.path] });
       toast({ title: variables.isDisabled ? "Voter disabled" : "Voter enabled" });
     },
-    onError: (err: Error) => {
+    onError: (err: Error, _variables, context) => {
+      context?.previous?.forEach(([queryKey, snapshot]) => {
+        queryClient.setQueryData(queryKey, snapshot);
+      });
       toast({ title: "Status update failed", description: err.message, variant: "destructive" });
     },
   });
@@ -202,11 +259,40 @@ function useDeleteVoter() {
         throw new Error(body?.message || "Failed to delete voter");
       }
     },
+    onMutate: async (id: number) => {
+      await queryClient.cancelQueries({ queryKey: [api.voters.list.path] });
+      const previous = queryClient.getQueriesData<VoterListResponse>({ queryKey: [api.voters.list.path] });
+      const deletedAt = new Date().toISOString();
+
+      for (const [queryKey, snapshot] of previous) {
+        if (!snapshot) continue;
+        const target = snapshot.items.find((item) => item.id === id);
+        if (!target) continue;
+        const disabledDelta = target.deletedAt ? 0 : 1;
+        queryClient.setQueryData<VoterListResponse>(queryKey, {
+          ...snapshot,
+          items: snapshot.items.map((item) =>
+            item.id === id
+              ? { ...item, deletedAt, isDisabled: true }
+              : item,
+          ),
+          counts: {
+            ...snapshot.counts,
+            disabled: snapshot.counts.disabled + disabledDelta,
+          },
+        });
+      }
+
+      return { previous };
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.voters.list.path] });
       toast({ title: "Voter moved to deleted state" });
     },
-    onError: (err: Error) => {
+    onError: (err: Error, _id, context) => {
+      context?.previous?.forEach(([queryKey, snapshot]) => {
+        queryClient.setQueryData(queryKey, snapshot);
+      });
       toast({ title: "Delete failed", description: err.message, variant: "destructive" });
     },
   });
@@ -226,11 +312,39 @@ function useRestoreVoter() {
         throw new Error(body?.message || "Failed to restore voter");
       }
     },
+    onMutate: async (id: number) => {
+      await queryClient.cancelQueries({ queryKey: [api.voters.list.path] });
+      const previous = queryClient.getQueriesData<VoterListResponse>({ queryKey: [api.voters.list.path] });
+
+      for (const [queryKey, snapshot] of previous) {
+        if (!snapshot) continue;
+        const target = snapshot.items.find((item) => item.id === id);
+        if (!target) continue;
+        const disabledDelta = target.deletedAt || target.isDisabled ? -1 : 0;
+        queryClient.setQueryData<VoterListResponse>(queryKey, {
+          ...snapshot,
+          items: snapshot.items.map((item) =>
+            item.id === id
+              ? { ...item, deletedAt: null, isDisabled: false }
+              : item,
+          ),
+          counts: {
+            ...snapshot.counts,
+            disabled: Math.max(0, snapshot.counts.disabled + disabledDelta),
+          },
+        });
+      }
+
+      return { previous };
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.voters.list.path] });
       toast({ title: "Voter restored" });
     },
-    onError: (err: Error) => {
+    onError: (err: Error, _id, context) => {
+      context?.previous?.forEach(([queryKey, snapshot]) => {
+        queryClient.setQueryData(queryKey, snapshot);
+      });
       toast({ title: "Restore failed", description: err.message, variant: "destructive" });
     },
   });
@@ -524,13 +638,15 @@ function DeleteVoterDialog({ voter, open, onOpenChange }: DeleteDialogProps) {
 }
 
 export default function AdminVoters() {
-  const { data: voters, isLoading } = useVoters();
-  const setVoterStatus = useSetVoterStatus();
-  const restoreVoter = useRestoreVoter();
-  const permanentDeleteVoter = usePermanentDeleteVoter();
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [sortBy, setSortBy] = useState<SortOption>("created_desc");
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
+  const { data: voterResponse, isLoading } = useVoters(searchQuery, roleFilter, sortBy, page, pageSize);
+  const setVoterStatus = useSetVoterStatus();
+  const restoreVoter = useRestoreVoter();
+  const permanentDeleteVoter = usePermanentDeleteVoter();
   const [editVoter, setEditVoter] = useState<Voter | null>(null);
   const [passwordVoter, setPasswordVoter] = useState<Voter | null>(null);
   const [deleteVoter, setDeleteVoter] = useState<Voter | null>(null);
@@ -538,49 +654,18 @@ export default function AdminVoters() {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const voters = voterResponse?.items ?? [];
+  const counts = voterResponse?.counts ?? { total: 0, voter: 0, analyst: 0, admin: 0, candidate: 0, disabled: 0 };
 
-  const filteredVoters = useMemo(() => {
-    if (!voters) return [];
-
-    const roleOf = (user: Voter) => (user.isAdmin || user.role === "admin" ? "admin" : user.role);
-
-    let list = voters.filter((voter) =>
-      voter.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      voter.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      voter.email.toLowerCase().includes(searchQuery.toLowerCase()),
-    );
-
-    if (roleFilter !== "all") {
-      list = list.filter((user) => roleOf(user) === roleFilter);
-    }
-
-    const roleRank: Record<string, number> = { admin: 0, analyst: 1, voter: 2 };
-    list.sort((a, b) => {
-      switch (sortBy) {
-        case "created_asc":
-          return new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime();
-        case "name_asc":
-          return a.name.localeCompare(b.name);
-        case "name_desc":
-          return b.name.localeCompare(a.name);
-        case "role":
-          return (roleRank[roleOf(a)] ?? 99) - (roleRank[roleOf(b)] ?? 99);
-        case "created_desc":
-        default:
-          return new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime();
-      }
-    });
-
-    return list;
-  }, [voters, searchQuery, roleFilter, sortBy]);
   const canManageUser = (user: Voter) => !(user.isAdmin || user.role === "admin");
-
-  const total = voters?.length ?? 0;
-  const voterCount = voters?.filter((voter) => voter.role === "voter").length ?? 0;
-  const analystCount = voters?.filter((voter) => voter.role === "analyst").length ?? 0;
-  const adminCount = voters?.filter((voter) => voter.isAdmin || voter.role === "admin").length ?? 0;
-  const disabledCount = voters?.filter((voter) => voter.isDisabled || !!voter.deletedAt).length ?? 0;
+  const total = counts.total;
+  const voterCount = counts.voter;
+  const analystCount = counts.analyst;
+  const adminCount = counts.admin;
+  const candidateCount = counts.candidate;
+  const disabledCount = counts.disabled;
   const activeCount = total - disabledCount;
+  const totalPages = Math.max(1, Math.ceil((voterResponse?.total ?? 0) / pageSize));
 
   return (
     <div className="space-y-6">
@@ -591,7 +676,7 @@ export default function AdminVoters() {
           </Link>
           <div>
             <h1 className="text-2xl font-bold">Manage Users</h1>
-            <p className="text-sm text-muted-foreground">View all users (voters, analysts, admins). Voter controls remain voter-only.</p>
+            <p className="text-sm text-muted-foreground">View all users, including candidate-linked voter accounts. Candidate accounts remain fully manageable here.</p>
           </div>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
@@ -600,9 +685,10 @@ export default function AdminVoters() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4">
         <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total users</p><p className="text-2xl font-bold">{total}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Voters</p><p className="text-2xl font-bold">{voterCount}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Candidates</p><p className="text-2xl font-bold text-indigo-600">{candidateCount}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Analysts</p><p className="text-2xl font-bold">{analystCount}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Admins</p><p className="text-2xl font-bold">{adminCount}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Active</p><p className="text-2xl font-bold text-green-600">{activeCount}</p></CardContent></Card>
@@ -620,23 +706,33 @@ export default function AdminVoters() {
                 className="pl-9"
                 placeholder="Search by name, username/registration number, or email..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setPage(1);
+                }}
               />
             </div>
             <select
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value as RoleFilter)}
+              onChange={(e) => {
+                setRoleFilter(e.target.value as RoleFilter);
+                setPage(1);
+              }}
             >
               <option value="all">All Roles</option>
               <option value="voter">Voters</option>
+              <option value="candidate">Candidates</option>
               <option value="analyst">Analysts</option>
               <option value="admin">Admins</option>
             </select>
             <select
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as SortOption)}
+              onChange={(e) => {
+                setSortBy(e.target.value as SortOption);
+                setPage(1);
+              }}
             >
               <option value="created_desc">Newest First</option>
               <option value="created_asc">Oldest First</option>
@@ -646,13 +742,13 @@ export default function AdminVoters() {
             </select>
           </div>
           <div className="text-xs text-muted-foreground">
-            Showing {filteredVoters.length} of {total} users
+            Showing {voters.length} of {voterResponse?.total ?? 0} matching users
           </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
-          ) : filteredVoters.length === 0 ? (
+          ) : voters.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">No voters found.</div>
           ) : (
             <div className="overflow-x-auto">
@@ -669,96 +765,165 @@ export default function AdminVoters() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredVoters.map((voter) => (
-                    <tr key={voter.id} className="border-b align-top">
-                      <td className="py-3 pr-4 font-medium">{voter.name}</td>
-                      <td className="py-3 pr-4">{voter.username}</td>
-                      <td className="py-3 pr-4">
-                        <Badge variant="secondary">
-                          {voter.isAdmin ? "admin" : voter.role}
-                        </Badge>
-                      </td>
-                      <td className="py-3 pr-4">{voter.email}</td>
-                      <td className="py-3 pr-4">
-                        <Badge variant={voter.deletedAt ? "destructive" : voter.isDisabled ? "destructive" : "secondary"}>
-                          {voter.deletedAt ? "Deleted" : voter.isDisabled ? "Disabled" : "Active"}
-                        </Badge>
-                      </td>
-                      <td className="py-3 pr-4">{voter.createdAt ? format(new Date(voter.createdAt), "MMM d, yyyy") : "N/A"}</td>
-                      <td className="py-3">
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={!!voter.deletedAt || !canManageUser(voter)}
-                            onClick={() => { setEditVoter(voter); setEditOpen(true); }}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={!!voter.deletedAt || !canManageUser(voter)}
-                            onClick={() => { setPasswordVoter(voter); setPasswordOpen(true); }}
-                          >
-                            <Lock className="mr-1 h-4 w-4" />Password
-                          </Button>
-                          <Button
-                            variant={voter.isDisabled ? "default" : "destructive"}
-                            size="sm"
-                            disabled={setVoterStatus.isPending || !!voter.deletedAt || !canManageUser(voter)}
-                            onClick={() => setVoterStatus.mutate({ id: voter.id, isDisabled: !voter.isDisabled })}
-                          >
-                            {voter.isDisabled ? <><Unlock className="mr-1 h-4 w-4" />Enable</> : <><ShieldX className="mr-1 h-4 w-4" />Disable</>}
-                          </Button>
-                          <Button
-                            variant={voter.deletedAt ? "default" : "destructive"}
-                            size="sm"
-                            disabled={!canManageUser(voter)}
-                            onClick={() => {
-                              if (voter.deletedAt) {
-                                restoreVoter.mutate(voter.id);
-                              } else {
-                                setDeleteVoter(voter);
-                                setDeleteOpen(true);
-                              }
-                            }}
-                          >
-                            <Trash2 className="mr-1 h-4 w-4" />
-                            {voter.deletedAt ? "Restore" : "Soft Delete"}
-                          </Button>
-                          {voter.deletedAt && (
+                  {voters.map((voter) => {
+                    const isPendingCandidate = voter.role === "candidate" && voter.candidateApprovalStatus === "pending";
+                    const statusVariant = voter.deletedAt
+                      ? "destructive"
+                      : isPendingCandidate
+                        ? "outline"
+                        : voter.isDisabled
+                          ? "destructive"
+                          : "secondary";
+                    const statusLabel = voter.deletedAt
+                      ? "Deleted"
+                      : isPendingCandidate
+                        ? "Pending Approval"
+                        : voter.isDisabled
+                          ? "Disabled"
+                          : "Active";
+
+                    return (
+                      <tr key={voter.id} className="border-b align-top">
+                        <td className="py-3 pr-4 font-medium">
+                          <div className="space-y-2">
+                            <div>{voter.name}</div>
+                            {voter.role === "candidate" && (
+                              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground space-y-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline">Candidate Intake</Badge>
+                                  <span className="font-medium text-foreground">{voter.candidateParty || "No party selected"}</span>
+                                  {voter.candidateSymbol && (
+                                    <span>Symbol: <span className="font-medium text-foreground">{voter.candidateSymbol}</span></span>
+                                  )}
+                                </div>
+                                {voter.candidatePartyManifesto && (
+                                  <div>
+                                    <span className="font-medium text-foreground">Party manifesto:</span>{" "}
+                                    {voter.candidatePartyManifesto}
+                                  </div>
+                                )}
+                                {voter.candidateManifesto && (
+                                  <div>
+                                    <span className="font-medium text-foreground">Candidate manifesto:</span>{" "}
+                                    {voter.candidateManifesto}
+                                  </div>
+                                )}
+                                {isPendingCandidate && (
+                                  <div className="text-amber-700 font-medium">
+                                    This candidate cannot sign in until an admin approves the account.
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 pr-4">{voter.username}</td>
+                        <td className="py-3 pr-4">
+                          <Badge variant="secondary">
+                            {voter.isAdmin ? "admin" : voter.isCandidate ? "candidate" : voter.role}
+                          </Badge>
+                        </td>
+                        <td className="py-3 pr-4">{voter.email}</td>
+                        <td className="py-3 pr-4">
+                          <Badge variant={statusVariant}>
+                            {statusLabel}
+                          </Badge>
+                        </td>
+                        <td className="py-3 pr-4">{voter.createdAt ? format(new Date(voter.createdAt), "MMM d, yyyy") : "N/A"}</td>
+                        <td className="py-3">
+                          <div className="flex flex-wrap gap-2">
                             <Button
-                              variant="destructive"
+                              variant="outline"
+                              size="sm"
+                              disabled={!!voter.deletedAt || !canManageUser(voter)}
+                              onClick={() => { setEditVoter(voter); setEditOpen(true); }}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={!!voter.deletedAt || !canManageUser(voter)}
+                              onClick={() => { setPasswordVoter(voter); setPasswordOpen(true); }}
+                            >
+                              <Lock className="mr-1 h-4 w-4" />Password
+                            </Button>
+                            <Button
+                              variant={voter.isDisabled ? "default" : "destructive"}
+                              size="sm"
+                              disabled={setVoterStatus.isPending || !!voter.deletedAt || !canManageUser(voter)}
+                              onClick={() => setVoterStatus.mutate({ id: voter.id, isDisabled: !voter.isDisabled })}
+                            >
+                              {voter.isDisabled
+                                ? <>{isPendingCandidate ? "Approve" : <><Unlock className="mr-1 h-4 w-4" />Enable</>}</>
+                                : <><ShieldX className="mr-1 h-4 w-4" />Disable</>}
+                            </Button>
+                            <Button
+                              variant={voter.deletedAt ? "default" : "destructive"}
                               size="sm"
                               disabled={!canManageUser(voter)}
-                              onClick={() => permanentDeleteVoter.mutate(voter.id)}
+                              onClick={() => {
+                                if (voter.deletedAt) {
+                                  restoreVoter.mutate(voter.id);
+                                } else {
+                                  setDeleteVoter(voter);
+                                  setDeleteOpen(true);
+                                }
+                              }}
                             >
                               <Trash2 className="mr-1 h-4 w-4" />
-                              Permanent Delete
+                              {voter.deletedAt ? "Restore" : "Soft Delete"}
                             </Button>
-                          )}
-                          {voter.deletedAt && (
-                            <div className="w-full text-xs text-muted-foreground mt-1">
-                              Deleted at {format(new Date(voter.deletedAt), "MMM d, yyyy p")}
-                            </div>
-                          )}
-                          {!voter.deletedAt && canManageUser(voter) && (
-                            <div className="w-full text-xs text-muted-foreground mt-1">
-                              Soft delete allows restore later.
-                            </div>
-                          )}
-                          {!canManageUser(voter) && (
-                            <div className="w-full text-xs text-muted-foreground mt-1">
-                              This is a {voter.isAdmin ? "system admin" : voter.role} account. View-only in this section.
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                            {voter.deletedAt && (
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                disabled={!canManageUser(voter)}
+                                onClick={() => permanentDeleteVoter.mutate(voter.id)}
+                              >
+                                <Trash2 className="mr-1 h-4 w-4" />
+                                Permanent Delete
+                              </Button>
+                            )}
+                            {voter.deletedAt && (
+                              <div className="w-full text-xs text-muted-foreground mt-1">
+                                Deleted at {format(new Date(voter.deletedAt), "MMM d, yyyy p")}
+                              </div>
+                            )}
+                            {!voter.deletedAt && canManageUser(voter) && (
+                              <div className="w-full text-xs text-muted-foreground mt-1">
+                                {isPendingCandidate
+                                  ? "Use Approve to enable sign-in for this pending candidate account."
+                                  : "Soft delete allows restore later."}
+                              </div>
+                            )}
+                            {!canManageUser(voter) && (
+                              <div className="w-full text-xs text-muted-foreground mt-1">
+                                This is a {voter.isAdmin ? "system admin" : voter.role} account. View-only in this section.
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
+            </div>
+          )}
+          {!isLoading && voterResponse && voterResponse.total > pageSize && (
+            <div className="mt-4 flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">
+                Page {page} of {totalPages}
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>
+                  Previous
+                </Button>
+                <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>
+                  Next
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>

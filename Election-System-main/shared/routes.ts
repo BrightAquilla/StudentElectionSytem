@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ELECTION_POSITIONS, insertUserSchema, insertElectionSchema, insertCandidateSchema, insertVoteSchema, users, elections, candidates, votes } from './schema';
+import { ELECTION_POSITIONS, insertUserSchema, insertElectionSchema, insertCandidateSchema, insertVoteSchema, users, elections, candidates, votes, parties } from './schema';
 
 const registrationNumberSchema = z
   .string()
@@ -32,6 +32,57 @@ export const errorSchemas = {
 // API CONTRACT
 // ============================================
 export const api = {
+  parties: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/parties' as const,
+      responses: {
+        200: z.array(z.custom<typeof parties.$inferSelect>()),
+      },
+    },
+    create: {
+      method: 'POST' as const,
+      path: '/api/parties' as const,
+      input: z.object({
+        code: z.string().min(2),
+        name: z.string().min(2),
+        symbol: z.string().min(1),
+        manifesto: z.string().min(20),
+      }),
+      responses: {
+        201: z.custom<typeof parties.$inferSelect>(),
+        400: errorSchemas.validation,
+        403: errorSchemas.unauthorized,
+        409: errorSchemas.conflict,
+      },
+    },
+    update: {
+      method: 'PATCH' as const,
+      path: '/api/parties/:id' as const,
+      input: z.object({
+        code: z.string().min(2),
+        name: z.string().min(2),
+        symbol: z.string().min(1),
+        manifesto: z.string().min(20),
+      }),
+      responses: {
+        200: z.custom<typeof parties.$inferSelect>(),
+        400: errorSchemas.validation,
+        403: errorSchemas.unauthorized,
+        404: errorSchemas.notFound,
+        409: errorSchemas.conflict,
+      },
+    },
+    delete: {
+      method: 'DELETE' as const,
+      path: '/api/parties/:id' as const,
+      responses: {
+        204: z.void(),
+        403: errorSchemas.unauthorized,
+        404: errorSchemas.notFound,
+      },
+    },
+  },
   auth: {
     register: {
       method: 'POST' as const,
@@ -41,6 +92,27 @@ export const api = {
         username: registrationNumberSchema,
         email: z.string().email(),
         password: z.string().min(6),
+        accountType: z.enum(["voter", "candidate"]).default("voter"),
+        party: z.string().min(2).optional(),
+        symbol: z.string().min(1).optional(),
+        partyManifesto: z.string().min(10).optional(),
+        candidateManifesto: z.string().min(20).optional(),
+      }).superRefine((data, ctx) => {
+        if (data.accountType !== "candidate") {
+          return;
+        }
+        if (!data.party) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["party"], message: "Select a party." });
+        }
+        if (!data.symbol) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["symbol"], message: "Party symbol is required." });
+        }
+        if (!data.partyManifesto) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["partyManifesto"], message: "Party manifesto is required." });
+        }
+        if (!data.candidateManifesto) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["candidateManifesto"], message: "Candidate manifesto is required." });
+        }
       }),
       responses: {
         201: z.object({ message: z.string() }),
@@ -218,6 +290,75 @@ export const api = {
       },
     },
   },
+  auditLogs: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/audit-logs' as const,
+      responses: {
+        200: z.object({
+          items: z.array(
+            z.object({
+              id: z.number(),
+              action: z.string(),
+              actorId: z.number(),
+              actorName: z.string(),
+              actorRole: z.string(),
+              targetUserId: z.number().nullable(),
+              targetName: z.string().nullable(),
+              details: z.record(z.unknown()).nullable(),
+              createdAt: z.string(),
+            }),
+          ),
+          total: z.number(),
+          page: z.number(),
+          pageSize: z.number(),
+        }),
+        403: errorSchemas.unauthorized,
+      },
+    },
+    export: {
+      method: 'GET' as const,
+      path: '/api/audit-logs/export' as const,
+      responses: {
+        200: z.string(),
+        403: errorSchemas.unauthorized,
+      },
+    },
+    exportCreate: {
+      method: 'POST' as const,
+      path: '/api/audit-logs/export-jobs' as const,
+      responses: {
+        202: z.object({
+          jobId: z.string(),
+          status: z.enum(['queued', 'running']),
+        }),
+        403: errorSchemas.unauthorized,
+      },
+    },
+    exportStatus: {
+      method: 'GET' as const,
+      path: '/api/audit-logs/export-jobs/:id' as const,
+      responses: {
+        200: z.object({
+          jobId: z.string(),
+          status: z.enum(['queued', 'running', 'completed', 'failed']),
+          downloadPath: z.string().nullable(),
+          error: z.string().nullable(),
+        }),
+        403: errorSchemas.unauthorized,
+        404: errorSchemas.notFound,
+      },
+    },
+    exportDownload: {
+      method: 'GET' as const,
+      path: '/api/audit-logs/export-jobs/:id/download' as const,
+      responses: {
+        200: z.string(),
+        403: errorSchemas.unauthorized,
+        404: errorSchemas.notFound,
+      },
+    },
+  },
   candidates: {
     create: {
       method: 'POST' as const,
@@ -227,6 +368,33 @@ export const api = {
         201: z.custom<typeof candidates.$inferSelect>(),
         400: errorSchemas.validation,
         403: errorSchemas.unauthorized,
+      },
+    },
+    mine: {
+      method: 'GET' as const,
+      path: '/api/candidates/my' as const,
+      responses: {
+        200: z.array(
+          z.object({
+            candidateId: z.number(),
+            electionId: z.number(),
+            electionTitle: z.string(),
+            electionPosition: z.string(),
+            electionStatus: z.string(),
+            candidateName: z.string(),
+            party: z.string().nullable(),
+            partyManifesto: z.string().nullable(),
+            candidateManifesto: z.string().nullable(),
+            applicationStatus: z.string(),
+            reviewNotes: z.string().nullable(),
+            reviewedAt: z.string().nullable(),
+            voteCount: z.number(),
+            rank: z.number().nullable(),
+            leaderName: z.string().nullable(),
+            leaderVotes: z.number(),
+          }),
+        ),
+        401: errorSchemas.unauthorized,
       },
     },
     delete: {
@@ -309,7 +477,19 @@ export const api = {
       method: 'GET' as const,
       path: '/api/voters' as const,
       responses: {
-        200: z.array(z.custom<typeof users.$inferSelect>()),
+        200: z.object({
+          items: z.array(z.custom<typeof users.$inferSelect>()),
+          total: z.number(),
+          counts: z.object({
+            total: z.number(),
+            voter: z.number(),
+            analyst: z.number(),
+            admin: z.number(),
+            disabled: z.number(),
+          }),
+          page: z.number(),
+          pageSize: z.number(),
+        }),
         403: errorSchemas.unauthorized,
       },
     },

@@ -1,17 +1,46 @@
 import type { Express } from "express";
 import type { Server } from "http";
 import { hashPassword, setupAuth } from "./auth";
-import { storage } from "./storage";
+import { storage, VoteProcessingError } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import express from "express";
-import { broadcastRealtime } from "./realtime";
+import { broadcastActivity, broadcastRealtime } from "./realtime";
+import { rateLimit } from "./rate-limit";
+import { isUserEligibleForElection } from "./eligibility";
+import { getPerformanceActivityMetrics, getPerformanceHistory, getPerformanceMetrics, resetPerformanceMetrics } from "./performance";
+
+type AuditExportJob = {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  csv: string | null;
+  error: string | null;
+  createdAt: number;
+};
+
+const auditExportJobs = new Map<string, AuditExportJob>();
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  const toSafeUser = (user: { id: number; username: string; email: string; name: string; role: string; isAdmin: boolean; isDisabled: boolean; deletedAt: Date | null; createdAt: Date | null; }) => ({
+  const toSafeUser = (user: {
+    id: number;
+    username: string;
+    email: string;
+    name: string;
+    role: string;
+    isAdmin: boolean;
+    isDisabled: boolean;
+    deletedAt: Date | null;
+    createdAt: Date | null;
+    isCandidate?: boolean;
+    candidateParty?: string | null;
+    candidateSymbol?: string | null;
+    candidatePartyManifesto?: string | null;
+    candidateManifesto?: string | null;
+    candidateApprovalStatus?: string | null;
+  }) => ({
     id: user.id,
     username: user.username,
     email: user.email,
@@ -21,6 +50,12 @@ export async function registerRoutes(
     isDisabled: user.isDisabled,
     deletedAt: user.deletedAt,
     createdAt: user.createdAt,
+    isCandidate: user.isCandidate ?? false,
+    candidateParty: user.candidateParty ?? null,
+    candidateSymbol: user.candidateSymbol ?? null,
+    candidatePartyManifesto: user.candidatePartyManifesto ?? null,
+    candidateManifesto: user.candidateManifesto ?? null,
+    candidateApprovalStatus: user.candidateApprovalStatus ?? "not_applicable",
   });
 
   // Setup Authentication
@@ -28,6 +63,115 @@ export async function registerRoutes(
 
   // Increase body size limit to support base64 image uploads
   app.use(express.json({ limit: "10mb" }));
+
+  app.get(api.parties.list.path, async (_req, res) => {
+    const items = await storage.getParties();
+    res.json(items);
+  });
+  app.post(api.parties.create.path, async (req, res) => {
+    if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
+    try {
+      const input = api.parties.create.input.parse({
+        ...req.body,
+        code: String(req.body.code || "").trim().toLowerCase(),
+        name: String(req.body.name || "").trim(),
+        symbol: String(req.body.symbol || "").trim(),
+        manifesto: String(req.body.manifesto || "").trim(),
+      });
+      const existing = await storage.getPartyByCode(input.code);
+      if (existing) {
+        return res.status(409).json({ message: "Party code already exists" });
+      }
+      const created = await storage.createParty(input);
+      res.status(201).json(created);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message, details: err.errors });
+      }
+      if (isUniqueViolation(err)) {
+        return res.status(409).json({ message: "Party code already exists" });
+      }
+      throw err;
+    }
+  });
+  app.patch(api.parties.update.path, async (req, res) => {
+    if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
+    const id = parseInt(req.params.id);
+    try {
+      const input = api.parties.update.input.parse({
+        ...req.body,
+        code: String(req.body.code || "").trim().toLowerCase(),
+        name: String(req.body.name || "").trim(),
+        symbol: String(req.body.symbol || "").trim(),
+        manifesto: String(req.body.manifesto || "").trim(),
+      });
+      const existingByCode = await storage.getPartyByCode(input.code);
+      if (existingByCode && existingByCode.id !== id) {
+        return res.status(409).json({ message: "Party code already exists" });
+      }
+      const updated = await storage.updateParty(id, input);
+      if (!updated) {
+        return res.status(404).json({ message: "Party not found" });
+      }
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message, details: err.errors });
+      }
+      if (isUniqueViolation(err)) {
+        return res.status(409).json({ message: "Party code already exists" });
+      }
+      throw err;
+    }
+  });
+  app.delete(api.parties.delete.path, async (req, res) => {
+    if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
+    const id = parseInt(req.params.id);
+    const deleted = await storage.deleteParty(id);
+    if (!deleted) {
+      return res.status(404).json({ message: "Party not found" });
+    }
+    res.sendStatus(204);
+  });
+
+  const logAuthenticatedAudit = async (
+    req: any,
+    action: string,
+    details?: Record<string, unknown>,
+    targetUserId?: number,
+  ) => {
+    if (!req.isAuthenticated()) return;
+    await storage.createAuditLog({
+      actorId: req.user!.id,
+      action,
+      targetUserId,
+      details: details ? JSON.stringify(details) : undefined,
+    });
+  };
+  const invalidateAnalytics = () => {
+    storage.invalidateAnalyticsCache();
+  };
+  const emitActivity = (
+    type: string,
+    summary: string,
+    options?: {
+      actor?: string;
+      target?: string;
+      scope?: string;
+      status?: "info" | "success" | "warning" | "error";
+      meta?: Record<string, unknown>;
+    },
+  ) => {
+    broadcastActivity({
+      type,
+      summary,
+      actor: options?.actor,
+      target: options?.target,
+      scope: options?.scope,
+      status: options?.status,
+      meta: options?.meta,
+    });
+  };
 
   // === Election Routes ===
 
@@ -78,6 +222,14 @@ export async function registerRoutes(
       };
       const input = api.elections.create.input.parse(body);
       const election = await storage.createElection(input);
+      invalidateAnalytics();
+      emitActivity("election_created", `Election created for ${election.position}`, {
+        actor: req.user!.username,
+        target: election.title,
+        scope: "elections",
+        status: "success",
+        meta: { electionId: election.id, position: election.position },
+      });
       res.status(201).json(election);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -98,7 +250,26 @@ export async function registerRoutes(
         ...(req.body.endDate && { endDate: new Date(req.body.endDate) }),
       };
       const input = api.elections.update.input.parse(body);
+      const current = await storage.getElection(id);
+      if (!current) {
+        return res.status(404).json({ message: "Election not found" });
+      }
       const updated = await storage.updateElection(id, input);
+      invalidateAnalytics();
+      if (typeof input.isPublished === "boolean" && input.isPublished !== current.isPublished) {
+        await logAuthenticatedAudit(req, input.isPublished ? "ELECTION_PUBLISHED" : "ELECTION_UNPUBLISHED", {
+          electionId: updated.id,
+          title: updated.title,
+          position: updated.position,
+        });
+      }
+      emitActivity("election_updated", `Election updated: ${updated.title}`, {
+        actor: req.user!.username,
+        target: updated.title,
+        scope: "elections",
+        status: "info",
+        meta: { electionId: updated.id, position: updated.position },
+      });
       res.json(updated);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -112,7 +283,18 @@ export async function registerRoutes(
     if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
 
     const id = parseInt(req.params.id);
+    const existing = await storage.getElection(id);
     await storage.deleteElection(id);
+    invalidateAnalytics();
+    if (existing) {
+      emitActivity("election_deleted", `Election removed: ${existing.title}`, {
+        actor: req.user!.username,
+        target: existing.title,
+        scope: "elections",
+        status: "warning",
+        meta: { electionId: existing.id, position: existing.position },
+      });
+    }
     res.sendStatus(204);
   });
 
@@ -180,7 +362,7 @@ export async function registerRoutes(
 
   // === Candidate Routes ===
 
-  app.post(api.candidates.create.path, async (req, res) => {
+  app.post(api.candidates.create.path, rateLimit({ windowMs: 60_000, max: 30, scope: "candidate-create" }), async (req, res) => {
     if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
 
     try {
@@ -192,6 +374,14 @@ export async function registerRoutes(
         });
       }
       const candidate = await storage.createCandidate(input);
+      invalidateAnalytics();
+      emitActivity("candidate_created", `Candidate added: ${candidate.name}`, {
+        actor: req.user!.username,
+        target: candidate.name,
+        scope: "candidates",
+        status: "success",
+        meta: { electionId: candidate.electionId, status: candidate.status },
+      });
       res.status(201).json(candidate);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -202,12 +392,12 @@ export async function registerRoutes(
   });
 
   // Voter applies as candidate (status starts as "pending")
-  app.post("/api/candidates/apply", async (req, res) => {
+  app.post("/api/candidates/apply", rateLimit({ windowMs: 10 * 60_000, max: 10, scope: "candidate-apply" }), async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    if (req.user!.isAdmin) return res.status(403).json({ message: "Admins cannot apply as candidates" });
+    if (!["voter", "candidate"].includes(req.user!.role)) return res.status(403).json({ message: "Only registered voters can apply as candidates" });
 
     try {
-      const { electionId, name, party, symbol, platform } = req.body;
+      const { electionId, name, party, partyManifesto, symbol, platform } = req.body;
       if (!electionId || !name) {
         return res.status(400).json({ message: "electionId and name are required" });
       }
@@ -224,14 +414,40 @@ export async function registerRoutes(
           message: `Candidate "${name}" is already in ${existing.electionPosition} (${existing.electionTitle}). A candidate can only run in one active election position.`,
         });
       }
+      const existingByUser = await storage.findActiveCandidateByUserId(req.user!.id, Number(electionId));
+      if (existingByUser) {
+        return res.status(400).json({
+          message: `You already have an active candidacy in ${existingByUser.electionPosition} (${existingByUser.electionTitle}). One voter can only run for one active position at a time.`,
+        });
+      }
+      if (!isUserEligibleForElection(req.user!, election)) {
+        return res.status(400).json({
+          message: "You do not meet the faculty/year eligibility rules for this office.",
+        });
+      }
 
       const candidate = await storage.createCandidate({
         electionId: Number(electionId),
+        userId: req.user!.id,
         name,
         party: party || null,
+        partyManifesto: partyManifesto || null,
         symbol: symbol || null,
         platform: platform || null,
         status: "pending",
+      });
+      invalidateAnalytics();
+      await logAuthenticatedAudit(req, "CANDIDATE_APPLICATION_SUBMITTED", {
+        electionId: Number(electionId),
+        candidateName: name,
+        party: party || null,
+      });
+      emitActivity("candidate_applied", `${name} submitted a candidacy application`, {
+        actor: req.user!.username,
+        target: name,
+        scope: "candidates",
+        status: "info",
+        meta: { electionId: Number(electionId) },
       });
       res.status(201).json(candidate);
     } catch (err) {
@@ -258,9 +474,162 @@ export async function registerRoutes(
       }
 
       const updated = await storage.updateCandidate(id, req.body);
+      invalidateAnalytics();
+      emitActivity("candidate_updated", `Candidate updated: ${updated.name}`, {
+        actor: req.user!.username,
+        target: updated.name,
+        scope: "candidates",
+        status: "info",
+        meta: { electionId: updated.electionId, status: updated.status },
+      });
       res.json(updated);
     } catch (err) {
       res.status(500).json({ message: "Failed to update candidate" });
+    }
+  });
+
+  app.get("/api/performance/metrics", async (req, res) => {
+    if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
+    res.json({
+      capturedAt: new Date().toISOString(),
+      metrics: getPerformanceMetrics(),
+      activityMetrics: getPerformanceActivityMetrics(),
+      history: getPerformanceHistory(),
+    });
+  });
+
+  app.post("/api/performance/metrics/reset", async (req, res) => {
+    if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
+    resetPerformanceMetrics();
+    res.sendStatus(204);
+  });
+
+  app.get(api.auditLogs.list.path, async (req, res) => {
+    if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
+
+    try {
+      const action = String(req.query.action || "all");
+      const actionGroup = String(req.query.actionGroup || "all");
+      const actorRole = String(req.query.actorRole || "all");
+      const search = String(req.query.search || "");
+      const dateFrom = req.query.dateFrom ? new Date(String(req.query.dateFrom)) : undefined;
+      const dateTo = req.query.dateTo ? new Date(String(req.query.dateTo)) : undefined;
+      const electionId = req.query.electionId ? Number(req.query.electionId) : undefined;
+      const page = Math.max(1, Number(req.query.page || 1));
+      const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize || 20)));
+      const logs = await storage.getAuditLogs({ action, actionGroup, actorRole, search, dateFrom, dateTo, electionId, page, pageSize });
+      res.json({
+        items: logs.items,
+        total: logs.total,
+        page,
+        pageSize,
+      });
+    } catch {
+      res.status(500).json({ message: "Failed to fetch audit logs" });
+    }
+  });
+
+  app.get(api.auditLogs.export.path, async (req, res) => {
+    if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
+
+    try {
+      const csv = await buildAuditCsv({
+        action: String(req.query.action || "all"),
+        actionGroup: String(req.query.actionGroup || "all"),
+        actorRole: String(req.query.actorRole || "all"),
+        search: String(req.query.search || ""),
+        dateFrom: req.query.dateFrom ? new Date(String(req.query.dateFrom)) : undefined,
+        dateTo: req.query.dateTo ? new Date(String(req.query.dateTo)) : undefined,
+        electionId: req.query.electionId ? Number(req.query.electionId) : undefined,
+      });
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="audit-trail-${new Date().toISOString().slice(0, 10)}.csv"`);
+      res.send(csv);
+    } catch {
+      res.status(500).json({ message: "Failed to export audit logs" });
+    }
+  });
+
+  app.post(api.auditLogs.exportCreate.path, async (req, res) => {
+    if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
+
+    const filters = {
+      action: String(req.body?.action || "all"),
+      actionGroup: String(req.body?.actionGroup || "all"),
+      actorRole: String(req.body?.actorRole || "all"),
+      search: String(req.body?.search || ""),
+      dateFrom: req.body?.dateFrom ? new Date(String(req.body.dateFrom)) : undefined,
+      dateTo: req.body?.dateTo ? new Date(String(req.body.dateTo)) : undefined,
+      electionId: req.body?.electionId ? Number(req.body.electionId) : undefined,
+    };
+
+    const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    auditExportJobs.set(jobId, {
+      id: jobId,
+      status: "queued",
+      csv: null,
+      error: null,
+      createdAt: Date.now(),
+    });
+
+    void (async () => {
+      const job = auditExportJobs.get(jobId);
+      if (!job) return;
+      job.status = "running";
+      try {
+        job.csv = await buildAuditCsv(filters);
+        job.status = "completed";
+      } catch (error) {
+        job.status = "failed";
+        job.error = error instanceof Error ? error.message : "Export failed";
+      }
+    })();
+
+    res.status(202).json({ jobId, status: "queued" });
+  });
+
+  app.get(api.auditLogs.exportStatus.path, async (req, res) => {
+    if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
+
+    const job = auditExportJobs.get(req.params.id);
+    if (!job) {
+      return res.status(404).json({ message: "Export job not found" });
+    }
+
+    res.json({
+      jobId: job.id,
+      status: job.status,
+      downloadPath: job.status === "completed"
+        ? api.auditLogs.exportDownload.path.replace(":id", job.id)
+        : null,
+      error: job.error,
+    });
+  });
+
+  app.get(api.auditLogs.exportDownload.path, async (req, res) => {
+    if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
+
+    const job = auditExportJobs.get(req.params.id);
+    if (!job || job.status !== "completed" || !job.csv) {
+      return res.status(404).json({ message: "Export file not ready" });
+    }
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="audit-trail-${job.id}.csv"`);
+    res.send(job.csv);
+  });
+
+  app.get("/api/candidates/my", async (req, res) => {
+    if (!req.isAuthenticated()) return res.sendStatus(401);
+    if (!["voter", "candidate"].includes(req.user!.role)) {
+      return res.status(403).json({ message: "Only registered voters have candidate dashboards." });
+    }
+    try {
+      const entries = await storage.getCandidateApplicationsByUserId(req.user!.id);
+      res.json(entries);
+    } catch {
+      res.status(500).json({ message: "Failed to load candidate dashboard" });
     }
   });
 
@@ -268,7 +637,18 @@ export async function registerRoutes(
     if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
 
     const id = parseInt(req.params.id);
+    const existing = await storage.getCandidate(id);
     await storage.deleteCandidate(id);
+    invalidateAnalytics();
+    if (existing) {
+      emitActivity("candidate_deleted", `Candidate removed: ${existing.name}`, {
+        actor: req.user!.username,
+        target: existing.name,
+        scope: "candidates",
+        status: "warning",
+        meta: { electionId: existing.electionId },
+      });
+    }
     res.sendStatus(204);
   });
 
@@ -276,8 +656,16 @@ export async function registerRoutes(
   app.get("/api/candidates", async (req, res) => {
     if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
     const status = (req.query.status as string) || "pending";
-    const candidates = await storage.getCandidatesByStatus(status);
-    res.json(candidates);
+    const search = String(req.query.search || "");
+    const page = Math.max(1, Number(req.query.page || 1));
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize || 12)));
+    const result = await storage.getCandidatesPage({ status, search, page, pageSize });
+    res.json({
+      items: result.items,
+      total: result.total,
+      page,
+      pageSize,
+    });
   });
 
   // === Voter Management Routes ===
@@ -307,16 +695,27 @@ export async function registerRoutes(
         role: "voter",
         isAdmin: false,
       });
+      invalidateAnalytics();
       await storage.createAuditLog({
         actorId: req.user!.id,
         action: "VOTER_CREATED",
         targetUserId: created.id,
         details: JSON.stringify({ username: created.username, email: created.email }),
       });
+      emitActivity("user_created", `User created: ${created.username}`, {
+        actor: req.user!.username,
+        target: created.username,
+        scope: "users",
+        status: "success",
+        meta: { role: created.role },
+      });
       res.status(201).json(toSafeUser(created));
     } catch (err) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ message: err.errors[0].message, details: err.errors });
+      }
+      if (isUniqueViolation(err)) {
+        return res.status(409).json({ message: "Registration number or email already exists" });
       }
       res.status(500).json({ message: "Failed to create voter" });
     }
@@ -325,8 +724,19 @@ export async function registerRoutes(
   // Get all users (admin list view)
   app.get(api.voters.list.path, async (req, res) => {
     if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
-    const voters = await storage.getVoters();
-    res.json(voters.map(toSafeUser));
+    const search = String(req.query.search || "");
+    const role = String(req.query.role || "all");
+    const sort = String(req.query.sort || "created_desc");
+    const page = Math.max(1, Number(req.query.page || 1));
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize || 20)));
+    const voterResult = await storage.getVotersPage({ search, role, sort, page, pageSize });
+    res.json({
+      items: voterResult.items.map(toSafeUser),
+      total: voterResult.total,
+      counts: voterResult.counts,
+      page,
+      pageSize,
+    });
   });
 
   // Get single manageable user (non-admin account)
@@ -371,6 +781,14 @@ export async function registerRoutes(
         targetUserId: updated.id,
         details: JSON.stringify({ username: updated.username, email: updated.email }),
       });
+      invalidateAnalytics();
+      emitActivity("user_updated", `User updated: ${updated.username}`, {
+        actor: req.user!.username,
+        target: updated.username,
+        scope: "users",
+        status: "info",
+        meta: { role: updated.role },
+      });
       res.json(toSafeUser(updated));
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -400,6 +818,14 @@ export async function registerRoutes(
         action: isDisabled ? "VOTER_DISABLED" : "VOTER_ENABLED",
         targetUserId: updated.id,
       });
+      invalidateAnalytics();
+      emitActivity(isDisabled ? "user_disabled" : "user_enabled", `${updated.username} was ${isDisabled ? "disabled" : "enabled"}`, {
+        actor: req.user!.username,
+        target: updated.username,
+        scope: "users",
+        status: isDisabled ? "warning" : "success",
+        meta: { role: updated.role },
+      });
       res.json(toSafeUser(updated));
     } catch {
       res.status(404).json({ message: "User not found" });
@@ -424,6 +850,13 @@ export async function registerRoutes(
         action: "VOTER_PASSWORD_RESET",
         targetUserId: updated.id,
       });
+      emitActivity("password_reset", `Password reset for ${updated.username}`, {
+        actor: req.user!.username,
+        target: updated.username,
+        scope: "users",
+        status: "warning",
+        meta: { role: updated.role },
+      });
       res.json(toSafeUser(updated));
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -446,6 +879,14 @@ export async function registerRoutes(
       action: "VOTER_SOFT_DELETED",
       targetUserId: deleted.id,
     });
+    invalidateAnalytics();
+    emitActivity("user_soft_deleted", `${deleted.username} moved to recycle state`, {
+      actor: req.user!.username,
+      target: deleted.username,
+      scope: "users",
+      status: "warning",
+      meta: { role: deleted.role },
+    });
     res.sendStatus(204);
   });
 
@@ -461,6 +902,14 @@ export async function registerRoutes(
       actorId: req.user!.id,
       action: "VOTER_RESTORED",
       targetUserId: restored.id,
+    });
+    invalidateAnalytics();
+    emitActivity("user_restored", `${restored.username} was restored`, {
+      actor: req.user!.username,
+      target: restored.username,
+      scope: "users",
+      status: "success",
+      meta: { role: restored.role },
     });
     res.json(toSafeUser(restored));
   });
@@ -483,6 +932,14 @@ export async function registerRoutes(
         email: userToDelete.email,
       }),
     });
+    invalidateAnalytics();
+    emitActivity("user_deleted", `${userToDelete.username} was permanently deleted`, {
+      actor: req.user!.username,
+      target: userToDelete.username,
+      scope: "users",
+      status: "error",
+      meta: { role: userToDelete.role },
+    });
     res.sendStatus(204);
   });
 
@@ -490,19 +947,36 @@ export async function registerRoutes(
   app.patch("/api/candidates/:id/status", async (req, res) => {
     if (!req.isAuthenticated() || !req.user!.isAdmin) return res.sendStatus(403);
     const id = parseInt(req.params.id);
-    const { status } = req.body;
+    const { status, reviewNotes } = req.body;
     if (!["pending", "approved", "rejected"].includes(status)) {
       return res.status(400).json({ message: "Invalid status" });
     }
-    const updated = await storage.updateCandidateStatus(id, status);
+    const normalizedReviewNotes = typeof reviewNotes === "string" ? reviewNotes.trim() : "";
+    if (status === "rejected" && !normalizedReviewNotes) {
+      return res.status(400).json({ message: "A rejection reason is required." });
+    }
+    const updated = await storage.updateCandidateStatus(id, status, normalizedReviewNotes || null);
+    invalidateAnalytics();
+    await logAuthenticatedAudit(req, status === "approved" ? "CANDIDATE_APPROVED" : status === "rejected" ? "CANDIDATE_REJECTED" : "CANDIDATE_REVIEW_UPDATED", {
+      candidateId: id,
+      reviewNotes: normalizedReviewNotes || null,
+    });
+    emitActivity("candidate_status_changed", `Candidate ${updated.name} marked ${status}`, {
+      actor: req.user!.username,
+      target: updated.name,
+      scope: "candidates",
+      status: status === "approved" ? "success" : status === "rejected" ? "warning" : "info",
+      meta: { electionId: updated.electionId, status },
+    });
     res.json(updated);
   });
 
   // === Voting Routes ===
 
-  app.post(api.votes.cast.path, async (req, res) => {
+  app.post(api.votes.cast.path, rateLimit({ windowMs: 60_000, max: 25, scope: "vote-cast" }), async (req, res) => {
     if (!req.isAuthenticated()) return res.sendStatus(401);
-    if (req.user!.role !== "voter") {
+    if (!["voter", "candidate"].includes(req.user!.role)) {
+      await logAuthenticatedAudit(req, "VOTE_BLOCKED", { reason: "non_voter_role", role: req.user!.role });
       return res.status(403).json({ message: "Only registered voters can cast votes." });
     }
     
@@ -512,33 +986,21 @@ export async function registerRoutes(
 
     try {
       const input = api.votes.cast.input.parse(req.body);
-      
-      const hasVoted = await storage.hasUserVoted(req.user!.id, input.electionId);
-      if (hasVoted) {
-        return res.status(400).json({ message: "You have already voted in this election." });
-      }
-
-      // Verify election is open
-      const election = await storage.getElection(input.electionId);
-      if (!election || !election.isPublished) {
-        return res.status(400).json({ message: "Election is not open." });
-      }
-
-      const registeredVoters = await storage.getRegisteredVoterCount();
-      const electionVotes = await storage.getElectionVoteCount(input.electionId);
-      if (electionVotes >= registeredVoters) {
-        return res.status(400).json({ message: "Vote limit reached for this election." });
-      }
-      
-      const now = new Date();
-      if (now < election.startDate || now > election.endDate) {
-        return res.status(400).json({ message: "Election is not currently active." });
-      }
-
-      const vote = await storage.castVote({
+      const vote = await storage.castVoteSafely({
         voterId: req.user!.id,
         electionId: input.electionId,
         candidateId: input.candidateId
+      });
+      await logAuthenticatedAudit(req, "VOTE_CAST", {
+        electionId: input.electionId,
+        candidateId: input.candidateId,
+      });
+      invalidateAnalytics();
+      emitActivity("vote_cast", `Vote recorded in election ${input.electionId}`, {
+        actor: req.user!.username,
+        scope: "votes",
+        status: "success",
+        meta: { electionId: input.electionId, candidateId: input.candidateId },
       });
       broadcastRealtime("vote_cast", {
         electionId: input.electionId,
@@ -549,6 +1011,10 @@ export async function registerRoutes(
     } catch (err) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ message: err.errors[0].message });
+      }
+      if (err instanceof VoteProcessingError) {
+        await logAuthenticatedAudit(req, "VOTE_BLOCKED", { reason: err.message, electionId: req.body?.electionId });
+        return res.status(err.statusCode).json({ message: err.message });
       }
       throw err;
     }
@@ -565,4 +1031,63 @@ export async function registerRoutes(
   });
 
   return httpServer;
+}
+
+function toCsv(rows: string[][]) {
+  return rows
+    .map((row) =>
+      row
+        .map((value) => `"${String(value).replace(/"/g, '""')}"`)
+        .join(","),
+    )
+    .join("\n");
+}
+
+function isUniqueViolation(error: unknown) {
+  return !!error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "23505";
+}
+
+async function buildAuditCsv(filters: {
+  action: string;
+  actionGroup: string;
+  actorRole: string;
+  search: string;
+  dateFrom?: Date;
+  dateTo?: Date;
+  electionId?: number;
+}) {
+  const pageSize = 1000;
+  let page = 1;
+  let total = 0;
+  const items: Awaited<ReturnType<typeof storage.getAuditLogs>>["items"] = [];
+
+  do {
+    const batch = await storage.getAuditLogs({
+      action: filters.action,
+      actionGroup: filters.actionGroup,
+      actorRole: filters.actorRole,
+      search: filters.search,
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      electionId: filters.electionId,
+      page,
+      pageSize,
+    });
+    total = batch.total;
+    items.push(...batch.items);
+    page += 1;
+  } while (items.length < total);
+
+  return toCsv([
+    ["id", "action", "actorName", "actorRole", "targetName", "createdAt", "details"],
+    ...items.map((entry) => [
+      String(entry.id),
+      entry.action,
+      entry.actorName,
+      entry.actorRole,
+      entry.targetName || "",
+      entry.createdAt,
+      entry.details ? JSON.stringify(entry.details) : "",
+    ]),
+  ]);
 }

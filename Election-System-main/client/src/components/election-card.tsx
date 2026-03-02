@@ -15,6 +15,14 @@ export function ElectionCard({ election, isAdmin = false }: ElectionCardProps) {
   const now = new Date();
   const startDate = new Date(election.startDate!);
   const endDate = new Date(election.endDate!);
+  const facultyRules = String(election.eligibleFaculties || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const yearRules = String(election.eligibleYearLevels || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
   
   const isPublished = election.isPublished !== false; // Default to true if not specified
   const isActive = now >= startDate && now <= endDate;
@@ -81,6 +89,25 @@ export function ElectionCard({ election, isAdmin = false }: ElectionCardProps) {
             <span>Ends: {format(new Date(election.endDate!), "PPp")}</span>
           </div>
         </div>
+        {(facultyRules.length > 0 || yearRules.length > 0) && (
+          <div className="mt-4 space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Candidate Eligibility
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {facultyRules.map((faculty) => (
+                <Badge key={`faculty-${faculty}`} variant="outline" className="text-[11px]">
+                  Faculty: {faculty}
+                </Badge>
+              ))}
+              {yearRules.map((year) => (
+                <Badge key={`year-${year}`} variant="outline" className="text-[11px]">
+                  Year {year}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
       </CardContent>
 
       <CardFooter className="pt-4 border-t bg-muted/20">

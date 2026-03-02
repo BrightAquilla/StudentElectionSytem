@@ -1,6 +1,6 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ELECTION_POSITIONS, insertElectionSchema } from "@shared/schema";
+import { ELECTION_POSITIONS, FACULTY_CODES, insertElectionSchema } from "@shared/schema";
 import { useCreateElection } from "@/hooks/use-elections";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,28 @@ const formSchema = insertElectionSchema.extend({
   endDate: z.string(),
 });
 
+const YEAR_LEVEL_OPTIONS = ["1", "2", "3", "4", "5", "6"];
+
+function toggleCsvSelection(currentValue: string | null | undefined, item: string) {
+  const values = String(currentValue || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (values.includes(item)) {
+    return values.filter((entry) => entry !== item).join(",");
+  }
+
+  return [...values, item].join(",");
+}
+
+function parseCsv(value: string | null | undefined) {
+  return String(value || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 export default function CreateElection() {
   const { mutate, isPending } = useCreateElection();
   const [, setLocation] = useLocation();
@@ -35,11 +57,15 @@ export default function CreateElection() {
       title: "",
       position: "President",
       description: "",
+      eligibleFaculties: "",
+      eligibleYearLevels: "",
       startDate: "",
       endDate: "",
       isPublished: true,
     },
   });
+  const selectedFaculties = parseCsv(form.watch("eligibleFaculties"));
+  const selectedYearLevels = parseCsv(form.watch("eligibleYearLevels"));
 
   function onSubmit(values: z.infer<typeof formSchema>) {
     mutate({
@@ -120,6 +146,64 @@ export default function CreateElection() {
                 )}
               />
 
+              <FormField
+                control={form.control}
+                name="eligibleFaculties"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Eligible Faculty Codes</FormLabel>
+                    <FormDescription>
+                      Leave empty to allow all faculties. Restrict candidate applications to selected faculty codes.
+                    </FormDescription>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {FACULTY_CODES.map((facultyCode) => {
+                        const selected = String(field.value || "").split(",").filter(Boolean).includes(facultyCode);
+                        return (
+                          <label key={facultyCode} className="flex items-center gap-2 rounded-md border border-input px-3 py-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => field.onChange(toggleCsvSelection(field.value, facultyCode))}
+                            />
+                            <span>{facultyCode}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="eligibleYearLevels"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Eligible Year Levels</FormLabel>
+                    <FormDescription>
+                      Leave empty to allow all year levels. Applies to candidate applications for this office.
+                    </FormDescription>
+                    <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+                      {YEAR_LEVEL_OPTIONS.map((yearLevel) => {
+                        const selected = String(field.value || "").split(",").filter(Boolean).includes(yearLevel);
+                        return (
+                          <label key={yearLevel} className="flex items-center justify-center gap-2 rounded-md border border-input px-3 py-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => field.onChange(toggleCsvSelection(field.value, yearLevel))}
+                            />
+                            <span>Y{yearLevel}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <FormField
                   control={form.control}
@@ -148,6 +232,29 @@ export default function CreateElection() {
                     </FormItem>
                   )}
                 />
+              </div>
+
+              <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold">Eligibility Summary</p>
+                  <p className="text-xs text-muted-foreground">This is how the office restrictions will appear to admins and applicants.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {selectedFaculties.length > 0 ? selectedFaculties.map((faculty) => (
+                    <span key={faculty} className="rounded-full border px-3 py-1 text-xs font-medium">
+                      Faculty: {faculty}
+                    </span>
+                  )) : (
+                    <span className="rounded-full border px-3 py-1 text-xs font-medium">All faculties</span>
+                  )}
+                  {selectedYearLevels.length > 0 ? selectedYearLevels.map((yearLevel) => (
+                    <span key={yearLevel} className="rounded-full border px-3 py-1 text-xs font-medium">
+                      Year {yearLevel}
+                    </span>
+                  )) : (
+                    <span className="rounded-full border px-3 py-1 text-xs font-medium">All year levels</span>
+                  )}
+                </div>
               </div>
 
               <div className="pt-4 flex justify-end gap-4">
