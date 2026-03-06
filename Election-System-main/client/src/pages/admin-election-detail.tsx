@@ -240,7 +240,7 @@ function EditElectionDialog({ election }: { election: any }) {
       <DialogTrigger asChild>
         <Button variant="outline" size="sm"><Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit</Button>
       </DialogTrigger>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto pr-2">
         <DialogHeader><DialogTitle>Edit Election</DialogTitle></DialogHeader>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-2">
           <div className="space-y-1.5">
@@ -431,7 +431,7 @@ function EditCandidateDialog({ candidate, electionPosition }: { candidate: any; 
           <Pencil className="h-4 w-4" />
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto pr-2">
         <DialogHeader><DialogTitle>Edit Candidate</DialogTitle></DialogHeader>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-2">
           <div className="flex gap-5 items-start">
@@ -511,7 +511,7 @@ function AddCandidateDialog({ electionId, electionPosition, compact = false }: {
           <UserPlus className={compact ? "mr-1.5 h-3.5 w-3.5" : "mr-2 h-4 w-4"} /> Add Candidate
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto pr-2">
         <DialogHeader><DialogTitle>Add New Candidate</DialogTitle></DialogHeader>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 mt-2">
           <div className="flex gap-5 items-start">
@@ -887,3 +887,4 @@ export default function AdminElectionDetail() {
     </div>
   );
 }
+

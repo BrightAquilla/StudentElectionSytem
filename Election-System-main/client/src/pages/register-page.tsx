@@ -149,18 +149,25 @@ export default function RegisterPage() {
 
   function onSubmit(values: z.infer<typeof registerSchema>) {
     const { confirmPassword, ...data } = values;
-    const payload = {
-      ...data,
-      party: selectedPartyConfig?.name,
-      symbol: selectedPartyConfig?.symbol,
-      partyManifesto: selectedPartyConfig?.manifesto,
-      username: data.username.toUpperCase(),
-    };
+    const payload = data.accountType === "candidate"
+      ? {
+          ...data,
+          party: selectedPartyConfig?.name,
+          symbol: selectedPartyConfig?.symbol,
+          partyManifesto: selectedPartyConfig?.manifesto,
+          username: data.username.toUpperCase(),
+        }
+      : {
+          name: data.name,
+          username: data.username.toUpperCase(),
+          email: data.email,
+          password: data.password,
+          accountType: data.accountType,
+        };
     register(payload, {
       onSuccess: () => setLocation("/login"),
     });
   }
-
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted p-4">
       <div className="w-full max-w-2xl space-y-8">
@@ -381,3 +388,4 @@ export default function RegisterPage() {
     </div>
   );
 }
+
